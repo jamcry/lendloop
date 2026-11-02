@@ -52,12 +52,25 @@ export const sync = mutation({
 
     if (existing) {
       // Keep the profile fresh without clobbering role or trusted status.
-      if (
+      // Keep the profile fresh without clobbering `trustedLender`.
+      const profileDrift =
         existing.name !== name ||
         existing.email !== email ||
-        existing.imageUrl !== imageUrl
-      ) {
-        await ctx.db.patch(existing._id, { name, email, imageUrl });
+        existing.imageUrl !== imageUrl;
+
+      // ADMIN_EMAILS is authoritative for bootstrap admins, so adding an address
+      // to the deployment env promotes an existing account on the next sync.
+      // Demotion stays manual (admin panel), and only applies while the address
+      // is no longer listed here.
+      const needsPromotion = isBootstrapAdmin(email) && existing.role !== "admin";
+
+      if (profileDrift || needsPromotion) {
+        await ctx.db.patch(existing._id, {
+          name,
+          email,
+          imageUrl,
+          role: needsPromotion ? "admin" : existing.role,
+        });
       }
       return existing._id;
     }

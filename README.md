@@ -27,7 +27,7 @@ npx convex dev --once
 # 3. Point Convex at your Clerk instance
 npx convex env set CLERK_JWT_ISSUER_DOMAIN https://your-app.clerk.accounts.dev
 
-# 4. Your first account becomes admin
+# 4. This address becomes admin (add it before or after signing up — either works)
 npx convex env set ADMIN_EMAILS you@example.com
 
 # 5. Optional: ten demo tools so the public page isn't empty
@@ -169,8 +169,9 @@ Four things this does deliberately:
   lend a real object belongs to the person who owns it. This is a product
   judgement, and it's the kind of thing that matters more than a role check.
 - **Admins cannot change their own role**, which prevents accidental lockout.
-- **The first admin comes from `ADMIN_EMAILS`**, so nobody has to poke the
-  database to get started.
+- **Bootstrap admins come from `ADMIN_EMAILS`**, applied on every sync, so nobody
+  has to poke the database to get started and adding a second admin later is a
+  one-line env change. Demotion is a deliberate admin-panel action.
 
 These are not just asserted — `convex/lendloop.test.ts` runs the negative cases as
 multiple mocked users (23 tests). A non-admin calling `admin.allUsers` fails. A

@@ -105,6 +105,31 @@ describe("users", () => {
     expect(count).toBe(1);
   });
 
+  it("promotes an address listed in ADMIN_EMAILS, including an existing account", async () => {
+    const previous = process.env.ADMIN_EMAILS;
+    const t = setup();
+    const boss: Identity = {
+      tokenIdentifier: "clerk|boss",
+      subject: "boss",
+      email: "boss@example.com",
+      name: "Boss",
+    };
+
+    try {
+      // First sign-in without the env var: plain user.
+      const asBoss = await signIn(t, boss);
+      expect((await asBoss.query(api.users.me, {}))?.role).toBe("user");
+
+      // Adding the address to the deployment env promotes on the next sync.
+      process.env.ADMIN_EMAILS = "boss@example.com";
+      await asBoss.mutation(api.users.sync, {});
+      expect((await asBoss.query(api.users.me, {}))?.role).toBe("admin");
+    } finally {
+      if (previous === undefined) delete process.env.ADMIN_EMAILS;
+      else process.env.ADMIN_EMAILS = previous;
+    }
+  });
+
   it("does not let a client promote itself", async () => {
     const t = setup();
     const asAlice = await signIn(t, alice);
