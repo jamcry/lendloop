@@ -54,7 +54,11 @@ export function todayUtc(now = Date.now()): number {
  * Rejected: missing/NaN values, reversed ranges, ranges longer than
  * MAX_LOAN_DAYS, and starts before today (a request cannot begin in the past).
  */
-export function assertLoanRange(startDate: number, endDate: number, now = Date.now()): void {
+export function assertLoanRange(
+  startDate: number,
+  endDate: number,
+  now = Date.now(),
+): void {
   if (!Number.isFinite(startDate) || !Number.isFinite(endDate)) {
     invalidInput("Start and end dates are required.");
   }

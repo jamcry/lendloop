@@ -3,15 +3,15 @@ import { describe, expect, it } from "vitest";
 
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import schema from "./schema";
+import schema, { TOOL_CATEGORIES, TOOL_CONDITIONS } from "./schema";
+import { CATEGORY_LABELS, CONDITION_LABELS } from "../lib/labels";
 import { todayUtc } from "./lib/validation";
 
 const DAY = 86_400_000;
 
-const modules = import.meta.glob("./**/*.ts");
-
+/** Uses convex-test's built-in module discovery for this project's `convex/` dir. */
 function setup() {
-  return convexTest(schema, modules);
+  return convexTest(schema);
 }
 
 type Test = ReturnType<typeof setup>;
@@ -99,7 +99,9 @@ describe("users", () => {
     await signIn(t, alice);
     await signIn(t, alice);
 
-    const count = await t.run(async (ctx) => (await ctx.db.query("users").collect()).length);
+    const count = await t.run(
+      async (ctx) => (await ctx.db.query("users").collect()).length,
+    );
     expect(count).toBe(1);
   });
 
@@ -324,7 +326,9 @@ describe("loans", () => {
     const loanId = await asBob.mutation(api.loans.request, { toolId, ...range(1, 2) });
 
     const asCam = await signIn(t, cam);
-    await expect(asCam.query(api.loans.get, { id: loanId })).rejects.toThrow(/not yours/i);
+    await expect(asCam.query(api.loans.get, { id: loanId })).rejects.toThrow(
+      /not yours/i,
+    );
   });
 
   it("blocks a request that overlaps an approved loan", async () => {
@@ -408,5 +412,15 @@ describe("loans", () => {
     await expect(
       asBob.mutation(api.loans.request, { toolId, ...range(1, 2) }),
     ).rejects.toThrow(/no longer available/i);
+  });
+});
+
+describe("schema and UI labels", () => {
+  it("has a display label for every category and condition", () => {
+    // Convex can only bundle files under convex/, so the label maps are a
+    // deliberate duplicate. This fails the build if a new enum value is added
+    // without one, instead of rendering a raw slug like "power-tools".
+    expect(Object.keys(CATEGORY_LABELS).sort()).toEqual([...TOOL_CATEGORIES].sort());
+    expect(Object.keys(CONDITION_LABELS).sort()).toEqual([...TOOL_CONDITIONS].sort());
   });
 });

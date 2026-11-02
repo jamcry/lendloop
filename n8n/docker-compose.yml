@@ -1,0 +1,30 @@
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: lendloop-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      # Secrets come from n8n/.env, never from this file.
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:?set N8N_ENCRYPTION_KEY in n8n/.env}
+      - LENDLOOP_SHARED_SECRET=${LENDLOOP_SHARED_SECRET:?set LENDLOOP_SHARED_SECRET in n8n/.env}
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - GENERIC_TIMEZONE=Europe/Istanbul
+      # Only reachable from the host, which is all this needs.
+      - N8N_SECURE_COOKIE=false
+      - N8N_DIAGNOSTICS_ENABLED=false
+      # Workflow JSON is imported manually; keep the editor enabled in dev only.
+      - N8N_USER_MANAGEMENT_DISABLED=false
+    volumes:
+      - n8n_data:/home/node/.n8n
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5678/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  n8n_data:

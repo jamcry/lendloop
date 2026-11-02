@@ -52,7 +52,11 @@ export const sync = mutation({
 
     if (existing) {
       // Keep the profile fresh without clobbering role or trusted status.
-      if (existing.name !== name || existing.email !== email || existing.imageUrl !== imageUrl) {
+      if (
+        existing.name !== name ||
+        existing.email !== email ||
+        existing.imageUrl !== imageUrl
+      ) {
         await ctx.db.patch(existing._id, { name, email, imageUrl });
       }
       return existing._id;

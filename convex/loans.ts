@@ -10,11 +10,7 @@ import {
   type Viewer,
 } from "./lib/authz";
 import { assertRangeIsFree, isOverdue } from "./lib/loans";
-import {
-  assertLoanRange,
-  cleanText,
-  MAX_MESSAGE_LENGTH,
-} from "./lib/validation";
+import { assertLoanRange, cleanText, MAX_MESSAGE_LENGTH } from "./lib/validation";
 
 /**
  * Loan lifecycle:
@@ -123,7 +119,8 @@ export const decide = mutation({
     const loan = await ctx.db.get(loanId);
     if (!loan) notFound("Loan");
 
-    if (loan.ownerId !== viewer._id) forbidden("Only the lender can decide on a request.");
+    if (loan.ownerId !== viewer._id)
+      forbidden("Only the lender can decide on a request.");
     if (loan.status !== "pending") {
       throw new Error(`This request was already ${loan.status}.`);
     }
@@ -150,7 +147,8 @@ export const cancel = mutation({
     const loan = await ctx.db.get(loanId);
     if (!loan) notFound("Loan");
 
-    if (loan.borrowerId !== viewer._id) forbidden("Only the borrower can cancel this request.");
+    if (loan.borrowerId !== viewer._id)
+      forbidden("Only the borrower can cancel this request.");
     if (loan.status !== "pending") {
       throw new Error("Only pending requests can be cancelled.");
     }
@@ -170,7 +168,8 @@ export const markReturned = mutation({
     const loan = await ctx.db.get(loanId);
     if (!loan) notFound("Loan");
 
-    if (loan.ownerId !== viewer._id) forbidden("Only the lender can mark a loan returned.");
+    if (loan.ownerId !== viewer._id)
+      forbidden("Only the lender can mark a loan returned.");
     if (loan.status !== "approved") {
       throw new Error("Only approved loans can be marked returned.");
     }

@@ -4,11 +4,7 @@ import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { assertOwnerOrAdmin, forbidden, notFound, requireViewer } from "./lib/authz";
 import { lentToolsByToolId } from "./lib/loans";
-import {
-  cleanText,
-  MAX_DESCRIPTION_LENGTH,
-  MAX_NAME_LENGTH,
-} from "./lib/validation";
+import { cleanText, MAX_DESCRIPTION_LENGTH, MAX_NAME_LENGTH } from "./lib/validation";
 import { toolCategoryValidator, toolConditionValidator } from "./schema";
 
 function toToolFields(
@@ -26,8 +22,8 @@ function toToolFields(
     ownerId: tool.ownerId,
     isMine: tool.ownerId === viewerId,
     availability: activeLoan
-      ? ({ state: "lent" as const, until: activeLoan.endDate })
-      : ({ state: "available" as const, until: null }),
+      ? { state: "lent" as const, until: activeLoan.endDate }
+      : { state: "available" as const, until: null },
     createdAt: tool.createdAt,
   };
 }
@@ -72,20 +68,27 @@ export const browse = query({
 
     const visible = tools.filter((tool) => tool.archivedAt === undefined);
 
-    const owners = new Map<string, string>();
+    const owners = new Map<string, { name: string; trustedLender: boolean }>();
     for (const tool of visible) {
       if (!owners.has(tool.ownerId)) {
         const owner = await ctx.db.get(tool.ownerId);
-        owners.set(tool.ownerId, owner?.name ?? "Neighbor");
+        owners.set(tool.ownerId, {
+          name: owner?.name ?? "Neighbor",
+          trustedLender: owner?.trustedLender ?? false,
+        });
       }
     }
 
     return visible
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map((tool) => ({
-        ...toToolFields(tool, lent, viewer._id),
-        ownerName: owners.get(tool.ownerId) ?? "Neighbor",
-      }));
+      .map((tool) => {
+        const owner = owners.get(tool.ownerId);
+        return {
+          ...toToolFields(tool, lent, viewer._id),
+          ownerName: owner?.name ?? "Neighbor",
+          ownerTrustedLender: owner?.trustedLender ?? false,
+        };
+      });
   },
 });
 
@@ -102,7 +105,9 @@ export const get = query({
 
     const myPending = await ctx.db
       .query("loans")
-      .withIndex("by_borrower", (q) => q.eq("borrowerId", viewer._id).eq("status", "pending"))
+      .withIndex("by_borrower", (q) =>
+        q.eq("borrowerId", viewer._id).eq("status", "pending"),
+      )
       .collect();
 
     const mine = myPending.find((loan) => loan.toolId === tool._id);
