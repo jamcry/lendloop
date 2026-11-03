@@ -281,7 +281,7 @@ Against the real deployment and a real n8n container (v2.46.4):
 | Forged signature at n8n webhook     | `401`                                |
 | Daily workflow run twice            | **one** reminder row                 |
 
-45 automated tests cover the signature scheme (including a known-answer vector
+46 automated tests cover the signature scheme (including a known-answer vector
 computed independently in Python), the outbox, the retry ladder, idempotency, and
 the overdue query.
 
@@ -315,8 +315,10 @@ not a bug.
 
 ### Data minimization
 
-- **Public board:** name and category. No owner, condition, description, or count
-  of loans. Verified by a test that asserts the exact key set.
+- **Public board:** name and category, and only for tools that are actually
+  available — a tool that is out on loan is not listed. No owner, condition,
+  description, or count of loans. Verified by tests that assert the exact key set
+  and that a lent tool disappears and reappears.
 - **`users.me`:** name, avatar, role, trusted flag. Not the email.
 - **Emails:** stored in `users` because the automation layer needs a destination,
   and returned only to admins (the admin panel is the only place they appear).
@@ -331,7 +333,7 @@ not a bug.
 ## Testing
 
 ```bash
-npm test        # 45 tests, convex-test, no deployment or keys needed
+npm test        # 46 tests, convex-test, no deployment or keys needed
 npm run typecheck
 npm run lint
 npm run build
@@ -373,7 +375,7 @@ convex/
   http.ts                 # signed inbound endpoints (overdue, reminders, failures)
   automation.ts           # outbox, delivery with retries, idempotent write-back
   lib/signing.ts          # HMAC + canonical JSON
-  lendloop.test.ts        # 26 tests
+  lendloop.test.ts        # 27 tests
   automation.test.ts      # 19 tests
   seed.ts
 docs/n8n-design.md

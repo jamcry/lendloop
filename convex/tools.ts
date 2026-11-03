@@ -43,7 +43,11 @@ export const listPublic = query({
       .withIndex("by_archived", (q) => q.eq("archivedAt", undefined))
       .collect();
 
+    // "Available" means actually available: a tool that is out on loan is not.
+    const lent = await lentToolsByToolId(ctx);
+
     return tools
+      .filter((tool) => !lent.has(tool._id))
       .sort((a, b) => b.createdAt - a.createdAt)
       .map((tool) => ({ name: tool.name, category: tool.category }));
   },

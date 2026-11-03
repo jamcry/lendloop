@@ -480,3 +480,23 @@ describe("removed listings and pending requests", () => {
     await expect(asAlice.query(api.tools.get, { id: deleted })).resolves.toBeNull();
   });
 });
+
+describe("public availability", () => {
+  it("hides a tool from the public list while it is out on loan", async () => {
+    const t = setup();
+    const toolId = await createTool(t, alice);
+    const asAlice = t.withIdentity(alice);
+    const asBob = await signIn(t, bob);
+
+    expect(await t.query(api.tools.listPublic, {})).toHaveLength(1);
+
+    const loanId = await asBob.mutation(api.loans.request, { toolId, ...range(0, 0) });
+    await asAlice.mutation(api.loans.decide, { loanId, decision: "approved" });
+
+    // Started today, so it is actively lent.
+    expect(await t.query(api.tools.listPublic, {})).toHaveLength(0);
+
+    await asAlice.mutation(api.loans.markReturned, { loanId });
+    expect(await t.query(api.tools.listPublic, {})).toHaveLength(1);
+  });
+});
