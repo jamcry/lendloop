@@ -22,9 +22,27 @@ function UserSync() {
 
   useEffect(() => {
     if (!isSignedIn) return;
-    // A failed sync self-heals on the next navigation; surfacing it as a toast
-    // here would just be noise on every page load.
-    void syncUser({}).catch(() => undefined);
+
+    // Retry a few times rather than swallowing the error: every authenticated
+    // page reads through this row, so a sync that never lands leaves the user
+    // with empty screens until they reload.
+    let cancelled = false;
+    let attempt = 0;
+
+    const run = async () => {
+      try {
+        await syncUser({});
+      } catch {
+        if (cancelled || attempt >= 3) return;
+        attempt += 1;
+        setTimeout(run, 600 * attempt);
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
   }, [isSignedIn, syncUser]);
 
   return null;

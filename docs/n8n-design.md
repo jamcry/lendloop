@@ -104,10 +104,11 @@ string from the same data. The first live test against n8n returned
 
 Three HTTP endpoints on Convex's `httpRouter`:
 
-| Endpoint                | Method | Purpose                                        |
-| ----------------------- | ------ | ---------------------------------------------- |
-| `/automation/overdue`   | GET    | Scheduled workflow polls overdue loans         |
-| `/automation/reminders` | POST   | Workflow records that a reminder was delivered |
+| Endpoint                | Method | Purpose                                 |
+| ----------------------- | ------ | --------------------------------------- |
+| `/automation/overdue`   | GET    | Scheduled workflow polls overdue loans  |
+| `/automation/reminders` | POST   | Workflow claims a reminder (idempotent) |
+| `/automation/failures`  | POST   | Error workflow reports a failed run     |
 
 `GET /overdue` wraps the internal query
 `automation.overdueLoans`. It returns six fields — `loanId`, `toolName`,

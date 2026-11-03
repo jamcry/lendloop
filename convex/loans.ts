@@ -5,9 +5,9 @@ import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/s
 import {
   assertLoanParticipant,
   forbidden,
+  getViewer,
   notFound,
   requireViewer,
-  type Viewer,
 } from "./lib/authz";
 import { enqueueLoanEvent } from "./automation";
 import { assertRangeIsFree, isOverdue } from "./lib/loans";
@@ -240,7 +240,9 @@ export const markReturned = mutation({
 export const myRequests = query({
   args: {},
   handler: async (ctx) => {
-    const viewer = await requireViewer(ctx);
+    const viewer = await getViewer(ctx);
+    if (!viewer) return [];
+
     const loans = await ctx.db
       .query("loans")
       .withIndex("by_borrower", (q) => q.eq("borrowerId", viewer._id))
@@ -255,7 +257,9 @@ export const myRequests = query({
 export const incoming = query({
   args: {},
   handler: async (ctx) => {
-    const viewer = await requireViewer(ctx);
+    const viewer = await getViewer(ctx);
+    if (!viewer) return [];
+
     const loans = await ctx.db
       .query("loans")
       .withIndex("by_owner", (q) => q.eq("ownerId", viewer._id))
@@ -270,7 +274,9 @@ export const incoming = query({
 export const get = query({
   args: { id: v.id("loans") },
   handler: async (ctx, { id }) => {
-    const viewer: Viewer = await requireViewer(ctx);
+    const viewer = await getViewer(ctx);
+    if (!viewer) return null;
+
     const loan = await ctx.db.get(id);
     // No distinct "not found" error: otherwise the difference between a missing
     // loan and someone else's loan tells a caller which ids exist.
@@ -285,7 +291,9 @@ export const get = query({
 export const forTool = query({
   args: { toolId: v.id("tools") },
   handler: async (ctx, { toolId }) => {
-    const viewer = await requireViewer(ctx);
+    const viewer = await getViewer(ctx);
+    if (!viewer) return null;
+
     const loans = await ctx.db
       .query("loans")
       .withIndex("by_borrower", (q) => q.eq("borrowerId", viewer._id))

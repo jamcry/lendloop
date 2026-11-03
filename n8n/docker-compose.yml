@@ -1,6 +1,7 @@
 services:
   n8n:
-    image: docker.n8n.io/n8nio/n8n:latest
+    # Pinned to the version this was verified against; bump deliberately.
+    image: docker.n8n.io/n8nio/n8n:2.46.4
     container_name: lendloop-n8n
     restart: unless-stopped
     ports:

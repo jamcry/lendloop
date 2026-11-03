@@ -146,9 +146,20 @@ describe("users", () => {
 });
 
 describe("tools", () => {
-  it("rejects unauthenticated access", async () => {
+  it("gives signed-out callers no data rather than an error", async () => {
     const t = setup();
-    await expect(t.query(api.tools.browse, {})).rejects.toThrow(/signed in/i);
+    // Reads degrade to empty so a not-yet-synced viewer doesn't hit the error
+    // boundary; writes still refuse outright.
+    await expect(t.query(api.tools.browse, {})).resolves.toEqual([]);
+    await expect(t.query(api.tools.myListings, {})).resolves.toEqual([]);
+    await expect(
+      t.mutation(api.tools.create, {
+        name: "Ladder",
+        category: "garden",
+        condition: "good",
+        description: "nope",
+      }),
+    ).rejects.toThrow(/signed in/i);
   });
 
   it("validates name and description", async () => {

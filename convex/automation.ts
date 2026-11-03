@@ -9,7 +9,7 @@ import {
   internalQuery,
   query,
 } from "./_generated/server";
-import { assertLoanParticipant, requireViewer } from "./lib/authz";
+import { assertLoanParticipant, getViewer } from "./lib/authz";
 import { canonicalJson, signedHeaders } from "./lib/signing";
 import { todayUtc } from "./lib/validation";
 
@@ -148,6 +148,42 @@ export const markSent = internalMutation({
  * after the last attempt marks the job failed *and* writes a visible activity
  * row — a failed notification must never disappear silently.
  */
+/**
+ * Marks a job failed and records it exactly once. Both the exhausted-retries path
+ * and the unconfigured-integration path end here, so they cannot drift apart.
+ */
+async function failJobPermanently(
+  ctx: MutationCtx,
+  job: { _id: Id<"automationJobs">; loanId: Id<"loans"> },
+  detail: string,
+  attempts: number,
+): Promise<void> {
+  const now = Date.now();
+
+  await ctx.db.patch(job._id, {
+    status: "failed",
+    attempts,
+    lastError: detail,
+    updatedAt: now,
+  });
+
+  const dedupeKey = `job:${job._id}:failed`;
+  const alreadyRecorded = await ctx.db
+    .query("loanActivity")
+    .withIndex("by_dedupe", (q) => q.eq("dedupeKey", dedupeKey))
+    .unique();
+  if (alreadyRecorded) return;
+
+  await ctx.db.insert("loanActivity", {
+    loanId: job.loanId,
+    kind: "notification.failed",
+    channel: "n8n",
+    detail: detail.slice(0, 300),
+    dedupeKey,
+    createdAt: now,
+  });
+}
+
 export const scheduleRetry = internalMutation({
   args: { jobId: v.id("automationJobs"), error: v.string() },
   handler: async (ctx, { jobId, error }) => {
@@ -158,20 +194,12 @@ export const scheduleRetry = internalMutation({
     const now = Date.now();
 
     if (attempts >= MAX_ATTEMPTS) {
-      await ctx.db.patch(jobId, {
-        status: "failed",
+      await failJobPermanently(
+        ctx,
+        job,
+        `Gave up after ${attempts} attempts: ${error}`,
         attempts,
-        lastError: error,
-        updatedAt: now,
-      });
-      await ctx.db.insert("loanActivity", {
-        loanId: job.loanId,
-        kind: "notification.failed",
-        channel: "n8n",
-        detail: `Gave up after ${attempts} attempts: ${error}`.slice(0, 300),
-        dedupeKey: `job:${jobId}:failed`,
-        createdAt: now,
-      });
+      );
       return;
     }
 
@@ -193,27 +221,7 @@ export const failJob = internalMutation({
     const job = await ctx.db.get(jobId);
     if (!job) return;
 
-    const now = Date.now();
-    await ctx.db.patch(jobId, {
-      status: "failed",
-      lastError: error,
-      updatedAt: now,
-    });
-
-    const alreadyRecorded = await ctx.db
-      .query("loanActivity")
-      .withIndex("by_dedupe", (q) => q.eq("dedupeKey", `job:${jobId}:failed`))
-      .unique();
-    if (alreadyRecorded) return;
-
-    await ctx.db.insert("loanActivity", {
-      loanId: job.loanId,
-      kind: "notification.failed",
-      channel: "n8n",
-      detail: error.slice(0, 300),
-      dedupeKey: `job:${jobId}:failed`,
-      createdAt: now,
-    });
+    await failJobPermanently(ctx, job, error, job.attempts);
   },
 });
 
@@ -392,8 +400,8 @@ export const overdueLoans = internalQuery({
 export const failedJobs = query({
   args: {},
   handler: async (ctx) => {
-    const viewer = await requireViewer(ctx);
-    if (viewer.role !== "admin") return [];
+    const viewer = await getViewer(ctx);
+    if (viewer?.role !== "admin") return [];
 
     const jobs = await ctx.db
       .query("automationJobs")
@@ -415,7 +423,9 @@ export const failedJobs = query({
 export const activityForLoan = query({
   args: { loanId: v.id("loans") },
   handler: async (ctx, { loanId }) => {
-    const viewer = await requireViewer(ctx);
+    const viewer = await getViewer(ctx);
+    if (!viewer) return [];
+
     const loan = await ctx.db.get(loanId);
     if (!loan) return [];
 
@@ -436,8 +446,8 @@ export const activityForLoan = query({
 export const recentActivity = query({
   args: {},
   handler: async (ctx) => {
-    const viewer = await requireViewer(ctx);
-    if (viewer.role !== "admin") return [];
+    const viewer = await getViewer(ctx);
+    if (viewer?.role !== "admin") return [];
 
     return await ctx.db
       .query("loanActivity")

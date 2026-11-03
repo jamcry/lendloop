@@ -74,7 +74,12 @@ function writeBackErrorResponse(error: unknown): Response | null {
   if (error instanceof ConvexError && error.data === "Unknown loan.") {
     return json({ error: "Unknown loan." }, 404);
   }
-  if (error instanceof Error && error.message.includes("ArgumentValidation")) {
+  // The runtime phrases this differently in tests ("Validator error") than in a
+  // deployment ("ArgumentValidationError"), so match on the family, not one string.
+  if (
+    error instanceof Error &&
+    /argumentvalidation|validator error/i.test(error.message)
+  ) {
     return json({ error: "Invalid loanId." }, 400);
   }
   return null;

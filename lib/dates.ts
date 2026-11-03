@@ -4,8 +4,6 @@
  * user in a negative-offset timezone.
  */
 
-const DAY = 86_400_000;
-
 function pad(value: number): string {
   return String(value).padStart(2, "0");
 }
@@ -48,10 +46,6 @@ export function formatRange(startDate: number, endDate: number): string {
   return `${formatDate(startDate)} – ${formatDate(endDate)}`;
 }
 
-export function dayCount(startDate: number, endDate: number): number {
-  return Math.round((endDate - startDate) / DAY) + 1;
-}
-
 /** "2 days ago", "just now" — for the audit trail. */
 export function relativeTime(timestamp: number, now = Date.now()): string {
   const diff = now - timestamp;
@@ -66,8 +60,4 @@ export function relativeTime(timestamp: number, now = Date.now()): string {
   if (days < 30) return `${days} ${days === 1 ? "day" : "days"} ago`;
 
   return formatDateWithYear(timestamp);
-}
-
-export function todayInputValue(): string {
-  return toDateInput(Date.now());
 }

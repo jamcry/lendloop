@@ -2,7 +2,7 @@ import { v } from "convex/values";
 
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
-import { forbidden, notFound, requireViewer } from "./lib/authz";
+import { forbidden, getViewer, notFound, requireViewer } from "./lib/authz";
 import { lentToolsByToolId } from "./lib/loans";
 import { cleanText, MAX_DESCRIPTION_LENGTH, MAX_NAME_LENGTH } from "./lib/validation";
 import { toolCategoryValidator, toolConditionValidator } from "./schema";
@@ -56,7 +56,12 @@ export const listPublic = query({
 export const browse = query({
   args: { category: v.optional(toolCategoryValidator) },
   handler: async (ctx, { category }) => {
-    const viewer = await requireViewer(ctx);
+    // Tolerate a viewer that has not synced yet: the query reads the users table,
+    // so Convex re-runs it as soon as the row appears. Throwing here would show an
+    // error page in the window between sign-in and the first sync.
+    const viewer = await getViewer(ctx);
+    if (!viewer) return [];
+
     const lent = await lentToolsByToolId(ctx);
 
     const tools = category
@@ -99,7 +104,9 @@ export const browse = query({
 export const get = query({
   args: { id: v.id("tools") },
   handler: async (ctx, { id }) => {
-    const viewer = await requireViewer(ctx);
+    const viewer = await getViewer(ctx);
+    if (!viewer) return null;
+
     const tool = await ctx.db.get(id);
     // Returning null (rather than throwing) lets the page render its "does not
     // exist" state instead of a Next.js error boundary.
@@ -141,7 +148,9 @@ export const get = query({
 export const myListings = query({
   args: {},
   handler: async (ctx) => {
-    const viewer = await requireViewer(ctx);
+    const viewer = await getViewer(ctx);
+    if (!viewer) return [];
+
     const lent = await lentToolsByToolId(ctx);
 
     const tools = await ctx.db
@@ -220,7 +229,9 @@ export const update = mutation({
 export const archive = mutation({
   args: { id: v.id("tools") },
   handler: async (ctx, { id }) => {
-    const viewer = await requireViewer(ctx);
+    const viewer = await getViewer(ctx);
+    if (!viewer) return null;
+
     const tool = await ctx.db.get(id);
     if (!tool) notFound("Tool");
     // Admins remove listings through `admin.archiveTool`, which writes an audit

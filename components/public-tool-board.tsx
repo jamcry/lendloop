@@ -29,7 +29,10 @@ export function PublicToolBoard() {
     return (
       <div className="text-muted-foreground flex flex-col items-center gap-3 rounded-xl border border-dashed py-12 text-sm">
         <PackageOpen className="size-6" aria-hidden />
-        <p>The shelf is empty right now. Be the first to share something.</p>
+        <p>
+          Nothing is available to borrow right now — every tool may be out on loan. Check
+          back, or be the first to share something.
+        </p>
       </div>
     );
   }

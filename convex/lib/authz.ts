@@ -58,10 +58,6 @@ export async function requireAdmin(ctx: Ctx): Promise<Viewer> {
   return viewer;
 }
 
-export function assertSelf(viewer: Viewer, userId: Id<"users">): void {
-  if (viewer._id !== userId) forbidden("You can only act on your own account.");
-}
-
 /** Guard for destructive self-actions, such as an admin demoting themselves. */
 export function assertNotSelf(viewer: Viewer, userId: Id<"users">): void {
   if (viewer._id === userId) forbidden("You cannot change your own account.");

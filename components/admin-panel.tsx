@@ -399,7 +399,8 @@ function AutomationFeed() {
 
       {rows.length === 0 ? (
         <div className="text-muted-foreground rounded-xl border border-dashed py-16 text-center text-sm">
-          No automation activity yet. Notifications appear here once n8n calls back.
+          No automation activity yet. Rows appear when a notification is dispatched or a
+          workflow reports a failure.
         </div>
       ) : (
         <ActivityTable rows={rows} />

@@ -35,9 +35,10 @@ npx convex env set ADMIN_EMAILS you@example.com
 npx convex env set SEED_ENABLED true
 npx convex run seed:populate
 
-# 6. Optional but required for automation: a shared secret, and a reachable n8n
+# 6. Only if you want the automation to run. The webhook URL must be reachable from
+#    Convex's cloud, so local n8n needs a tunnel — see n8n/README.md.
 npx convex env set LENDLOOP_SHARED_SECRET "$(openssl rand -hex 32)"
-npx convex env set N8N_WEBHOOK_URL http://localhost:5678/webhook/lendloop/request-event
+npx convex env set N8N_WEBHOOK_URL https://<your-tunnel>/webhook/lendloop/request-event
 
 npm run dev
 ```
@@ -290,9 +291,9 @@ Against the real deployment and a real n8n container (v2.46.4):
 | Forged signature at n8n webhook     | `401`                                |
 | Daily workflow run twice            | **one** reminder row                 |
 
-49 automated tests cover the signature scheme (including a known-answer vector
-computed independently in Python), the outbox, the retry ladder, idempotency, and
-the overdue query.
+61 automated tests cover the signature scheme (including a known-answer vector
+computed independently in Python), the HTTP endpoints through `t.fetch`, the
+outbox and its retry ladder, idempotency, and the overdue query.
 
 ### Local n8n
 
@@ -342,7 +343,7 @@ not a bug.
 ## Testing
 
 ```bash
-npm test        # 49 tests, convex-test, no deployment or keys needed
+npm test        # 61 tests, convex-test, no deployment or keys needed
 npm run typecheck
 npm run lint
 npm run build
@@ -386,6 +387,7 @@ convex/
   lib/signing.ts          # HMAC + canonical JSON
   lendloop.test.ts        # 30 tests
   automation.test.ts      # 19 tests
+  http.test.ts            # 12 tests
   seed.ts
 docs/n8n-design.md
 n8n/                      # compose + compose README

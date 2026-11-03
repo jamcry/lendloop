@@ -30,8 +30,9 @@ export function toPublicUser(user: Doc<"users">) {
  *
  * Called once per session by `<UserSync />`. Identity fields come from the JWT,
  * never from arguments, so a client cannot set its own email, name, or role.
- * `role` is seeded from ADMIN_EMAILS on creation only — later changes go through
- * the admin panel, which writes an audit event.
+ * `role` is seeded from ADMIN_EMAILS on creation and re-applied on every sync for
+ * listed addresses; unlisted users are managed from the admin panel, which writes
+ * an audit event.
  */
 export const sync = mutation({
   args: {},
@@ -50,7 +51,6 @@ export const sync = mutation({
 
     if (existing) {
       // Keep the profile fresh without clobbering role or trusted status.
-      // Keep the profile fresh without clobbering `trustedLender`.
       const profileDrift =
         existing.name !== name ||
         existing.email !== email ||
