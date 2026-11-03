@@ -58,17 +58,6 @@ export async function requireAdmin(ctx: Ctx): Promise<Viewer> {
   return viewer;
 }
 
-/**
- * Ownership check for the caller's own resources.
- *
- * Admins are allowed through only where the product says so; callers that need
- * the stricter rule use `assertSelf` instead.
- */
-export function assertOwnerOrAdmin(viewer: Viewer, ownerId: Id<"users">): void {
-  if (viewer.role === "admin") return;
-  if (viewer._id !== ownerId) forbidden("This belongs to someone else.");
-}
-
 export function assertSelf(viewer: Viewer, userId: Id<"users">): void {
   if (viewer._id !== userId) forbidden("You can only act on your own account.");
 }

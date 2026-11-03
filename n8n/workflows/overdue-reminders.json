@@ -70,7 +70,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Turns the response into one item per loan, each with its own signature and\n// idempotency key. The HTTP node downstream then runs once per item.\nconst crypto = require('crypto');\nconst secret = $env.LENDLOOP_SHARED_SECRET;\n\nconst response = $input.first().json;\nconst loans = Array.isArray(response.loans) ? response.loans : [];\nconst today = new Date().toISOString().slice(0, 10);\n\nconst output = [];\n\nfor (const loan of loans) {\n  if (!loan.loanId || !loan.daysOverdue || loan.daysOverdue <= 0) continue;\n\n  const dueDate = new Date(loan.dueDate).toISOString().slice(0, 10);\n  const message = `Your loan of ${loan.toolName} was due ${dueDate} and is ${loan.daysOverdue} day(s) late. Please return it to your neighbor.`;\n\n  // Mock notification. Replace with an Email node; the signature logic is identical.\n  console.log(`[LENDLOOP MOCK] to=${loan.borrowerEmail ?? 'unknown'} subject=Overdue: ${loan.toolName} | ${message}`);\n\n  const body = JSON.stringify({\n    loanId: loan.loanId,\n    channel: 'mock',\n    detail: `Overdue reminder for ${loan.toolName} (${loan.daysOverdue}d late)`,\n  });\n\n  const timestamp = String(Math.floor(Date.now() / 1000));\n  const signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');\n\n  output.push({\n    json: {\n      loanId: loan.loanId,\n      body,\n      timestamp,\n      signature,\n      // Derived from data, so a retried run and a duplicate schedule run produce\n      // the same key and the write-back collapses to one record.\n      idempotencyKey: `reminder:${loan.loanId}:${loan.dueDate}:${today}`,\n      message,\n    },\n  });\n}\n\nreturn output;"
+        "jsCode": "// Turns the response into one item per loan, each with its own signature and\n// idempotency key. No notification is sent here: the reminder is *claimed* first\n// so that a re-run of this workflow cannot send a second reminder.\nconst crypto = require('crypto');\nconst secret = $env.LENDLOOP_SHARED_SECRET;\n\nconst response = $input.first().json;\nconst loans = Array.isArray(response.loans) ? response.loans : [];\nconst today = new Date().toISOString().slice(0, 10);\n\nconst output = [];\n\nfor (const loan of loans) {\n  if (!loan.loanId || !loan.daysOverdue || loan.daysOverdue <= 0) continue;\n\n  const dueDate = new Date(loan.dueDate).toISOString().slice(0, 10);\n  const message = `Your loan of ${loan.toolName} was due ${dueDate} and is ${loan.daysOverdue} day(s) late. Please return it to your neighbor.`;\n\n  const body = JSON.stringify({\n    loanId: loan.loanId,\n    channel: 'mock',\n    detail: `Overdue reminder for ${loan.toolName} (${loan.daysOverdue}d late)`,\n  });\n\n  const timestamp = String(Math.floor(Date.now() / 1000));\n  const signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');\n\n  output.push({\n    json: {\n      loanId: loan.loanId,\n      body,\n      timestamp,\n      signature,\n      recipientEmail: loan.borrowerEmail ?? 'unknown',\n      // Derived from data, so a retried run and a duplicate schedule run produce\n      // the same key and the claim collapses to one record.\n      idempotencyKey: `reminder:${loan.loanId}:${loan.dueDate}:${today}`,\n      message,\n    },\n  });\n}\n\nreturn output;"
       },
       "id": "b1000000-0000-4000-8000-000000000004",
       "name": "Build signed reminders",
@@ -115,6 +115,17 @@
       "maxTries": 3,
       "waitBetweenTries": 5000,
       "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Sends only for reminders this run actually claimed. A duplicate claim means a\n// previous run already notified this borrower, so re-running the schedule is\n// safe: the record and the send collapse together.\nconst source = $('Build signed reminders').all();\n\nconst results = $input.all().map((item, index) => {\n  const claim = item.json ?? {};\n  const original = source[index]?.json ?? {};\n\n  if (claim.ok !== true || claim.duplicate !== false) return null;\n\n  console.log(\n    `[LENDLOOP MOCK] to=${original.recipientEmail ?? 'unknown'} subject=Overdue: ${original.message}`,\n  );\n\n  return { json: { loanId: original.loanId, sent: true } };\n});\n\nreturn results.filter(Boolean);"
+      },
+      "id": "b1000000-0000-4000-8000-000000000006",
+      "name": "Notify claimed reminders",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 0]
     }
   ],
   "connections": {
@@ -172,11 +183,22 @@
           }
         ]
       ]
+    },
+    "Record reminder": {
+      "main": [
+        [
+          {
+            "node": "Notify claimed reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
     "executionOrder": "v1",
-    "errorWorkflow": ""
+    "errorWorkflow": "uL7zVooxhJn6uBo4"
   },
   "active": false,
   "pinData": {},

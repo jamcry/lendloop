@@ -35,8 +35,15 @@ npx convex env set ADMIN_EMAILS you@example.com
 npx convex env set SEED_ENABLED true
 npx convex run seed:populate
 
+# 6. Optional but required for automation: a shared secret, and a reachable n8n
+npx convex env set LENDLOOP_SHARED_SECRET "$(openssl rand -hex 32)"
+npx convex env set N8N_WEBHOOK_URL http://localhost:5678/webhook/lendloop/request-event
+
 npm run dev
 ```
+
+See [`n8n/README.md`](n8n/README.md) for the n8n side. Without these two, every
+loan event records a visible `notification.failed` rather than failing silently.
 
 Open http://localhost:3000, sign up with the email you put in `ADMIN_EMAILS`, and
 the Admin tab appears.
@@ -74,12 +81,12 @@ Browser
   │  Clerk session JWT
   ├─────────────► Convex (queries + mutations, all authorization)
   │                  │
-  │                  └─ automationJobs (outbox) ──TODO──► n8n webhook
+  │                  └─ automationJobs (outbox) ──signed──► n8n webhook
   │                                                          │
   └───────────── Next.js App Router ── Clerk middleware ──┘  │
                      (proxy.ts, redirect only)                │
                                                              ▼
-                                              n8n workflows (designed, not built)
+                                                 n8n workflows (published)
                                                              │
                                               signed write-back ──► Convex HTTP
 ```
@@ -175,7 +182,7 @@ Four things this does deliberately:
   one-line env change. Demotion is a deliberate admin-panel action.
 
 These are not just asserted — `convex/lendloop.test.ts` runs the negative cases as
-multiple mocked users (23 tests). A non-admin calling `admin.allUsers` fails. A
+multiple mocked users (26 tests). A non-admin calling `admin.allUsers` fails. A
 borrower approving their own request fails. An unrelated user reading a loan
 fails.
 
@@ -274,7 +281,7 @@ Against the real deployment and a real n8n container (v2.46.4):
 | Forged signature at n8n webhook     | `401`                                |
 | Daily workflow run twice            | **one** reminder row                 |
 
-40 automated tests cover the signature scheme (including a known-answer vector
+45 automated tests cover the signature scheme (including a known-answer vector
 computed independently in Python), the outbox, the retry ladder, idempotency, and
 the overdue query.
 
@@ -313,8 +320,9 @@ not a bug.
 - **`users.me`:** name, avatar, role, trusted flag. Not the email.
 - **Emails:** stored in `users` because the automation layer needs a destination,
   and returned only to admins (the admin panel is the only place they appear).
-- **n8n payloads (designed):** five fields per reminder. No descriptions, no
-  addresses, no loan history.
+- **n8n payloads:** the request event carries only the recipient's email, plus
+  the tool name, dates, and status — never the other party's contact details. The
+  overdue payload is six fields. No descriptions, no addresses, no loan history.
 - **Seed data** is fictional and gated behind an env flag, so it can't land in a
   real environment by accident.
 
@@ -323,7 +331,7 @@ not a bug.
 ## Testing
 
 ```bash
-npm test        # 40 tests, convex-test, no deployment or keys needed
+npm test        # 45 tests, convex-test, no deployment or keys needed
 npm run typecheck
 npm run lint
 npm run build
@@ -358,15 +366,15 @@ components/
   *.tsx                   # feature components
 convex/
   schema.ts               # tables, enums, indexes
-  lib/authz.ts            # requireUser / requireAdmin / assertLoanParticipant
+  lib/authz.ts            # requireViewer / requireAdmin / assertLoanParticipant
   lib/validation.ts       # pure input + date-range rules
   lib/loans.ts            # availability map, overlap check, overdue predicate
   users.ts tools.ts loans.ts admin.ts
   http.ts                 # signed inbound endpoints (overdue, reminders, failures)
   automation.ts           # outbox, delivery with retries, idempotent write-back
   lib/signing.ts          # HMAC + canonical JSON
-  lendloop.test.ts        # 24 tests
-  automation.test.ts      # 16 tests
+  lendloop.test.ts        # 26 tests
+  automation.test.ts      # 19 tests
   seed.ts
 docs/n8n-design.md
 n8n/                      # compose + compose README
@@ -387,14 +395,14 @@ proxy.ts                  # Clerk middleware (Next 16 renamed middleware → pro
 
 **Data model**
 
-- `loanActivity` table for the automation trail (blocked on the n8n work).
 - A partial unique index or a `activeLoan` marker per tool to make double-booking
   impossible at the storage layer, not just in the mutation.
 - Soft-delete accounts, not just listings, and a retention policy for loans.
 
 **Reliability**
 
-- Implement the outbox with a dead-letter view in the admin panel.
+- Add a dead-letter retry button to the admin Automation tab, so a failed job can
+  be replayed without touching the database.
 - Add idempotency keys to borrow requests so a double-tap on a flaky connection
   cannot create two pending requests.
 - Rate-limit `loans.request` per user to stop request spam against one lender.

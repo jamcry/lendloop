@@ -133,6 +133,13 @@ http.route({
         detail,
       });
 
+      if ("conflict" in result && result.conflict) {
+        return json(
+          { error: "This Idempotency-Key was already used for a different loan." },
+          409,
+        );
+      }
+
       return json({ ok: true, duplicate: result.duplicate });
     } catch {
       // Covers an unknown or malformed loan id. The signature already proved the

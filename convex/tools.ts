@@ -2,7 +2,7 @@ import { v } from "convex/values";
 
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
-import { assertOwnerOrAdmin, forbidden, notFound, requireViewer } from "./lib/authz";
+import { forbidden, notFound, requireViewer } from "./lib/authz";
 import { lentToolsByToolId } from "./lib/loans";
 import { cleanText, MAX_DESCRIPTION_LENGTH, MAX_NAME_LENGTH } from "./lib/validation";
 import { toolCategoryValidator, toolConditionValidator } from "./schema";
@@ -98,7 +98,9 @@ export const get = query({
   handler: async (ctx, { id }) => {
     const viewer = await requireViewer(ctx);
     const tool = await ctx.db.get(id);
-    if (!tool) notFound("Tool");
+    // Returning null (rather than throwing) lets the page render its "does not
+    // exist" state instead of a Next.js error boundary.
+    if (!tool) return null;
 
     const lent = await lentToolsByToolId(ctx);
     const owner = await ctx.db.get(tool.ownerId);
@@ -218,7 +220,10 @@ export const archive = mutation({
     const viewer = await requireViewer(ctx);
     const tool = await ctx.db.get(id);
     if (!tool) notFound("Tool");
-    assertOwnerOrAdmin(viewer, tool.ownerId);
+    // Admins remove listings through `admin.archiveTool`, which writes an audit
+    // event. Allowing this path too would create an unaudited way to do the same
+    // thing.
+    if (tool.ownerId !== viewer._id) forbidden("You can only remove your own listings.");
     if (tool.archivedAt !== undefined) return;
 
     await ctx.db.patch(id, { archivedAt: Date.now(), updatedAt: Date.now() });

@@ -23,8 +23,9 @@ docker compose exec -T n8n n8n import:workflow --input=/workflows/request-notifi
 docker compose exec -T n8n n8n import:workflow --input=/workflows/overdue-reminders.json
 docker compose exec -T n8n n8n import:workflow --input=/workflows/error-handler.json
 
-# publish each (id from the listing)
+# publish each (id from the listing) — including the error workflow
 docker compose exec -T n8n n8n list:workflow
+docker compose exec -T n8n n8n publish:workflow --id=<id>
 docker compose exec -T n8n n8n publish:workflow --id=<id>
 docker compose exec -T n8n n8n publish:workflow --id=<id>
 
@@ -32,8 +33,17 @@ docker compose exec -T n8n n8n publish:workflow --id=<id>
 docker compose restart
 ```
 
-You should see `Processed 0 draft workflows, 2 published workflows` in the logs.
-Two, not three: error workflows are referenced by ID and are not activated.
+You should see `Processed 0 draft workflows, 3 published workflows`.
+
+All three need publishing, including the error workflow. An unpublished error
+workflow is invoked and then refused — n8n logs `Workflow "<id>" is not active
+and cannot be executed`, and the failure goes unreported. That is worth knowing
+because it looks like wiring that works.
+
+The exported JSON stores the error workflow's **ID**, and IDs are
+instance-specific. On your machine the reference will point at a workflow that
+does not exist, so re-select it in each workflow's **Settings → Error Workflow**
+after importing.
 
 The `workflows/` directory is mounted read-only, so a running instance can never
 rewrite the exported JSON in the repository.
@@ -47,8 +57,8 @@ executed without waiting for 08:00:
 docker compose run --rm --no-deps --entrypoint n8n -T n8n execute --id=<overdue-workflow-id>
 ```
 
-Run it twice. You should get exactly one reminder row written back to Convex —
-that is the idempotency key doing its job:
+Run it twice. The reminder is _claimed_ before it is sent, so the second run
+claims nothing and sends nothing — exactly one row and one notification:
 
 ```bash
 cd .. && npx convex data loanActivity

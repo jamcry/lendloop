@@ -65,6 +65,15 @@ export async function enqueueLoanEvent(
 
   const now = Date.now();
 
+  // Only the person who needs to act is addressed. The lender hears about new
+  // requests and cancellations; the borrower hears about decisions. The other
+  // party's email is never included.
+  const audience: "lender" | "borrower" =
+    kind === "loan.requested" || loan.status === "cancelled" ? "lender" : "borrower";
+
+  const recipient = audience === "lender" ? owner : borrower;
+  const counterparty = audience === "lender" ? borrower : owner;
+
   const payload = {
     eventId: `${kind}:${loan._id}:${loan.status}:${now}`,
     kind,
@@ -76,10 +85,10 @@ export async function enqueueLoanEvent(
       status: loan.status,
       startDate: loan.startDate,
       endDate: loan.endDate,
-      borrowerName: borrower?.name ?? "A neighbor",
-      borrowerEmail: borrower?.email ?? null,
-      ownerName: owner?.name ?? "A neighbor",
-      ownerEmail: owner?.email ?? null,
+      audience,
+      recipientName: recipient?.name ?? "A neighbor",
+      recipientEmail: recipient?.email ?? null,
+      counterpartyName: counterparty?.name ?? "A neighbor",
     },
   };
 
@@ -272,6 +281,9 @@ export const recordReminder = internalMutation({
       .unique();
 
     if (existing) {
+      // A key must describe one loan. Reusing it for another loan is a bug on the
+      // caller's side, not a retry, and must not report success.
+      if (existing.loanId !== loanId) return { duplicate: false, conflict: true };
       return { duplicate: true, activityId: existing._id };
     }
 
@@ -306,10 +318,6 @@ export const recordWorkflowFailure = internalMutation({
       .unique();
     if (existing) return { duplicate: true };
 
-    // Failures without a loan id are only meaningful if some loan exists to hang
-    // them on; fall back to skipping rather than inventing a reference.
-    if (!loanId) return { duplicate: false, skipped: true };
-
     await ctx.db.insert("loanActivity", {
       loanId,
       kind: "workflow.failed",
@@ -326,8 +334,8 @@ export const recordWorkflowFailure = internalMutation({
 /**
  * Loans that are approved, past their return date, and not yet returned.
  *
- * Only the fields a reminder needs: five of them. No lender email, no
- * description, no borrower history.
+ * Only the fields a reminder needs — six. No lender email, no description, no
+ * borrower history.
  */
 export const overdueLoans = internalQuery({
   args: {},

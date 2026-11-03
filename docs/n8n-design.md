@@ -88,8 +88,12 @@ string from the same data. The first live test against n8n returned
   with a fresh timestamp.
 - n8n's first node rejects anything older than 5 minutes.
 - Comparison must be constant-time.
-- Secret lives in an n8n **credential** and in Convex deployment env, never in
-  the workflow JSON. Exported workflows reference `$env` / credentials only.
+- The secret lives in Convex deployment env and in `n8n/.env`, never in the
+  workflow JSON. Workflows reference `$env.LENDLOOP_SHARED_SECRET`.
+- Honest note: this is `$env`, not an n8n credential. That requires
+  `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`, which lets _any_ imported Code node read
+  the container's environment — including `N8N_ENCRYPTION_KEY`. A credential with
+  a `$credentials` lookup would be tighter; `$env` is what the compose file uses.
 
 ## 4. Inbound (n8n → app)
 
@@ -112,12 +116,23 @@ POST /automation/reminders
 Idempotency-Key: reminder:<loanId>:<dueDate>:<daystamp>
 ```
 
-- `idempotencyKeys` table with a unique index on `key`.
-- First call inserts the key and the activity row in one transaction.
-- A replay hits the unique constraint and returns `200 {duplicate: true}` with the
-  original result — not a 409, because n8n should treat a retry as success.
+- The key is stored on the activity row (`loanActivity.dedupeKey`). Convex has no
+  unique indexes, so the lookup and the insert happen in **one mutation** — which
+  is serializable, making the read-then-insert safe.
+- First call inserts; a replay returns `200 {duplicate: true}` rather than a 409,
+  because for n8n a retry that already succeeded is a success.
+- Reusing a key for a _different_ loan returns `409`, since that is a caller bug,
+  not a retry.
 - The key is derived from data, not random, so a _retried workflow run_ and a
   _duplicate schedule run_ collapse to the same key.
+
+### Claim before sending
+
+The reminder is **claimed first, then sent**. The workflow posts the idempotent
+write-back, and only items where the response says `duplicate: false` proceed to
+the notification node. Ordering it the other way — send, then record — makes "run
+twice, get one reminder" true of the database and false of the borrower's inbox.
+Verified: 3 overdue loans, 3 claims, 1 notification sent.
 
 Inbound requests authenticate the same way (HMAC + timestamp), so n8n cannot be
 spoofed either. That is the "secure in both directions" requirement.
@@ -126,47 +141,53 @@ spoofed either. That is the "secure in both directions" requirement.
 
 ### `request-notification.json`
 
-(single Code node rather than a Switch — fewer places to get JSON wrong, and the
-message routing is three lines of JS)
+One Code node rather than a Switch: the payload already names the single person
+to notify, so routing is three lines of JS and there is no branch wiring to get
+wrong.
 
 ```
-Webhook (POST, responds immediately)
-  → Code: verify HMAC + 5-min window → 401 on failure
-  → Switch on status
-      pending  → Email (owner): "X wants your drill, Mar 4–6"
-      approved → Email (borrower): "Approved — collect it Mar 4"
-      declined → Email (borrower): "Not this time"
-      returned → Email (borrower): "Thanks for returning it"
-  → error branch → error workflow
+Webhook (POST, responds via a Respond node)
+  → Code: verify HMAC + 5-min window, render message → 401 on failure
+  → Respond: 200 with the rendered notification, or the rejection reason
 ```
 
-The webhook responds `202` before doing work, so a slow SMTP server cannot cause
-the app's dispatch action to time out and retry into a duplicate send. Duplicate
-sends are prevented anyway by the outbox job id, but responding fast is cheaper
-than relying on that.
+The webhook returns `200` after rendering, not `202` before — delivery here is a
+`console.log`, so there is nothing slow to wait for.
+
+**Known limitation:** if Convex times out (10s) after n8n has already handled the
+event, the retry delivers it a second time. The workflow does not dedupe on
+`eventId`. Closing that needs an `eventId` claim endpoint, the same shape as the
+reminder claim; for a logged mock the duplicate is a log line, but with real email
+it would be a second email.
 
 ### `overdue-reminders.json`
 
 ```
-Schedule Trigger (daily 08:00)
-  → HTTP Request: GET /automation/overdue (signed)
-  → Split In Batches (1)
-      → IF daysOverdue <= 0 → skip
-      → Email: "Your loan of <tool> was due <date>"
-      → HTTP Request: POST /automation/reminders
-          Idempotency-Key: reminder:<loanId>:<dueDate>:<today>
-      → on failure: retry 3x with backoff, then continue-on-fail
-  → Summary node → log counts
+Daily 08:00 (plus a manual trigger for `n8n execute`)
+  → Code: sign the GET
+  → HTTP GET /automation/overdue (signed)
+  → Code: one item per overdue loan, each with its own signature + idempotency key
+  → HTTP POST /automation/reminders (per item, retry 3x, continue on error)
+  → Code: notify only where duplicate === false
 ```
 
-`continue-on-fail` matters: one broken email address must not stop reminders for
-everyone else.
+No loop node: the HTTP Request node already runs once per input item, so fanning
+out is a Code node that returns an array.
+
+`continue-on-fail` on the write-back matters — one bad item must not stop
+reminders for everyone else.
 
 ### `error-handler.json`
 
-Registered as the n8n **Error Workflow** for both. Receives the failed execution,
-posts to `/automation/reminders` with `kind: "workflow.failed"`, and the admin
-panel surfaces it. If the app is unreachable too, the workflow writes to a
+Set as the `errorWorkflow` on both workflows. Receives the failed execution and
+posts `{ workflow, detail }` to `/automation/failures`, which records a
+`workflow.failed` row — surfaced in the admin Automation tab.
+
+Two things that cost time to discover: the error workflow must be **published**
+like any other, or n8n logs "cannot be executed"; and `errorWorkflow` holds a
+workflow **ID**, which is instance-specific. The exported JSON contains the ID
+from the machine it was exported on — on a fresh instance, re-select it in the
+workflow settings after import. If the app is unreachable too, the workflow writes to a
 dead-letter webhook (Slack) — but the last resort is n8n's own execution history,
 which is why the error workflow is a notification, not the only record.
 

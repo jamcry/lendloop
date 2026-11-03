@@ -209,7 +209,7 @@ describe("tools", () => {
     ).rejects.toThrow(/your own listings/i);
 
     await expect(asBob.mutation(api.tools.archive, { id: toolId })).rejects.toThrow(
-      /someone else/i,
+      /your own listings/i,
     );
   });
 
@@ -447,5 +447,36 @@ describe("schema and UI labels", () => {
     // without one, instead of rendering a raw slug like "power-tools".
     expect(Object.keys(CATEGORY_LABELS).sort()).toEqual([...TOOL_CATEGORIES].sort());
     expect(Object.keys(CONDITION_LABELS).sort()).toEqual([...TOOL_CONDITIONS].sort());
+  });
+});
+
+describe("removed listings and pending requests", () => {
+  it("refuses to approve a request once the listing is removed", async () => {
+    const t = setup();
+    const toolId = await createTool(t, alice);
+    const asAlice = t.withIdentity(alice);
+    const asBob = await signIn(t, bob);
+
+    const loanId = await asBob.mutation(api.loans.request, { toolId, ...range(1, 2) });
+
+    // The owner removes the listing while the request is still pending.
+    await asAlice.mutation(api.tools.archive, { id: toolId });
+
+    await expect(
+      asAlice.mutation(api.loans.decide, { loanId, decision: "approved" }),
+    ).rejects.toThrow(/listing was removed/i);
+  });
+
+  it("returns null for a listing that does not exist, instead of throwing", async () => {
+    const t = setup();
+    const toolId = await createTool(t, alice);
+    const asAlice = t.withIdentity(alice);
+
+    const deleted = await t.run(async (ctx) => {
+      await ctx.db.delete(toolId);
+      return toolId;
+    });
+
+    await expect(asAlice.query(api.tools.get, { id: deleted })).resolves.toBeNull();
   });
 });

@@ -1,5 +1,3 @@
-import { v } from "convex/values";
-
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { getViewer, unauthenticated } from "./lib/authz";
@@ -93,15 +91,5 @@ export const me = query({
   handler: async (ctx) => {
     const viewer = await getViewer(ctx);
     return viewer ? toPublicUser(viewer) : null;
-  },
-});
-
-/** Directory of lenders, so a tool page can show who owns it. */
-export const publicProfile = query({
-  args: { userId: v.id("users") },
-  handler: async (ctx, { userId }) => {
-    const user = await ctx.db.get(userId);
-    if (!user) return null;
-    return { name: user.name, trustedLender: user.trustedLender };
   },
 });

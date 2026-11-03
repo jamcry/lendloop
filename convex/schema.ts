@@ -4,7 +4,7 @@ import { v } from "convex/values";
 /**
  * Shared enums live here so validators, UI labels, and tests all read from the
  * same place. Anything added here must also be added to the label maps in
- * `lib/categories.ts` and `lib/conditions.ts`.
+ * `lib/labels.ts`.
  */
 export const TOOL_CATEGORIES = [
   "power-tools",
@@ -155,7 +155,9 @@ export default defineSchema({
    * creating a second "reminder sent" row.
    */
   loanActivity: defineTable({
-    loanId: v.id("loans"),
+    // Optional because a workflow failure may not belong to any specific loan
+    // (a schedule run that never reached the loan stage, for example).
+    loanId: v.optional(v.id("loans")),
     kind: v.union(
       v.literal("notification.sent"),
       v.literal("notification.failed"),

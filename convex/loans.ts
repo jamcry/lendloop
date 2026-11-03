@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
@@ -82,7 +82,7 @@ export const request = mutation({
         loan.endDate === args.endDate,
     );
     if (duplicate) {
-      throw new Error("You already have a pending request for those dates.");
+      throw new ConvexError("You already have a pending request for those dates.");
     }
 
     const now = Date.now();
@@ -140,7 +140,16 @@ export const decide = mutation({
     if (loan.ownerId !== viewer._id)
       forbidden("Only the lender can decide on a request.");
     if (loan.status !== "pending") {
-      throw new Error(`This request was already ${loan.status}.`);
+      throw new ConvexError(`This request was already ${loan.status}.`);
+    }
+
+    // A listing can be removed while a request is still pending. Approving it
+    // would reserve a tool the board no longer shows.
+    const tool = await ctx.db.get(loan.toolId);
+    if (tool?.archivedAt !== undefined) {
+      throw new ConvexError(
+        "This listing was removed, so the request cannot be approved.",
+      );
     }
 
     if (decision === "approved") {
@@ -170,7 +179,7 @@ export const cancel = mutation({
     if (loan.borrowerId !== viewer._id)
       forbidden("Only the borrower can cancel this request.");
     if (loan.status !== "pending") {
-      throw new Error("Only pending requests can be cancelled.");
+      throw new ConvexError("Only pending requests can be cancelled.");
     }
 
     await ctx.db.patch(loanId, {
@@ -193,7 +202,7 @@ export const markReturned = mutation({
     if (loan.ownerId !== viewer._id)
       forbidden("Only the lender can mark a loan returned.");
     if (loan.status !== "approved") {
-      throw new Error("Only approved loans can be marked returned.");
+      throw new ConvexError("Only approved loans can be marked returned.");
     }
 
     await ctx.db.patch(loanId, {

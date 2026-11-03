@@ -164,20 +164,24 @@ describe("automation outbox", () => {
     });
 
     const data = (jobs[0].payload as { data: Record<string, unknown> }).data;
-    // Only what a notification needs. No tool description, no user ids.
+    // Only what a notification needs. No tool description, no user ids, and no
+    // email for the party who is not being addressed.
     expect(Object.keys(data).sort()).toEqual([
-      "borrowerEmail",
-      "borrowerName",
+      "audience",
+      "counterpartyName",
       "endDate",
       "loanId",
-      "ownerEmail",
-      "ownerName",
+      "recipientEmail",
+      "recipientName",
       "startDate",
       "status",
       "toolCategory",
       "toolName",
     ]);
     expect(data).not.toHaveProperty("description");
+    // A new request addresses the lender.
+    expect(data.audience).toBe("lender");
+    expect(data.recipientEmail).toBe("alice@example.com");
   });
 
   it("queues a status change when a request is approved", async () => {
@@ -199,6 +203,15 @@ describe("automation outbox", () => {
     );
     expect(statuses).toContain("pending");
     expect(statuses).toContain("approved");
+
+    // A decision addresses the borrower, and the lender's email is not included.
+    const approved = jobs.find(
+      (job) => (job.payload as { data: { status: string } }).data.status === "approved",
+    );
+    const approvedData = (approved?.payload as { data: Record<string, unknown> }).data;
+    expect(approvedData.audience).toBe("borrower");
+    expect(approvedData.recipientEmail).toBe("bob@example.com");
+    expect(JSON.stringify(approvedData)).not.toContain("alice@example.com");
   });
 
   it("fails loudly, and visibly, when the integration is not configured", async () => {
@@ -410,5 +423,75 @@ describe("loan activity authorization", () => {
     // Non-admins get an empty list rather than an error, so the page degrades
     // quietly without leaking whether activity exists.
     expect(await asAlice.query(api.automation.recentActivity, {})).toEqual([]);
+  });
+});
+
+describe("workflow failure reporting", () => {
+  it("records a failure even when it does not belong to a specific loan", async () => {
+    const t = setup();
+    await signIn(t, alice);
+
+    const result = await t.mutation(internal.automation.recordWorkflowFailure, {
+      idempotencyKey: "workflow-failure:Overdue:123",
+      workflow: "LendLoop — Overdue reminders",
+      detail: "Fetch overdue loans: timeout",
+    });
+
+    expect(result.duplicate).toBe(false);
+
+    const rows = await t.run(async (ctx) => ctx.db.query("loanActivity").collect());
+    // Before this was fixed the row was silently skipped, so a broken workflow
+    // left no trace anywhere in the app.
+    expect(rows).toHaveLength(1);
+    expect(rows[0].kind).toBe("workflow.failed");
+    expect(rows[0].loanId).toBeUndefined();
+  });
+
+  it("collapses a repeated failure report", async () => {
+    const t = setup();
+    const args = {
+      idempotencyKey: "workflow-failure:Overdue:456",
+      workflow: "LendLoop — Overdue reminders",
+      detail: "same failure",
+    };
+
+    await t.mutation(internal.automation.recordWorkflowFailure, args);
+    const second = await t.mutation(internal.automation.recordWorkflowFailure, args);
+
+    expect(second.duplicate).toBe(true);
+    expect(
+      await t.run(async (ctx) => (await ctx.db.query("loanActivity").collect()).length),
+    ).toBe(1);
+  });
+});
+
+describe("idempotency-key reuse", () => {
+  it("reports a conflict instead of success when a key is reused for another loan", async () => {
+    const t = setup();
+    const first = await makeLoan(t);
+
+    // A second loan between the same two people.
+    const asBob = t.withIdentity(bob);
+    const secondLoanId = await asBob.mutation(api.loans.request, {
+      toolId: first.toolId,
+      startDate: todayUtc() + 40 * DAY,
+      endDate: todayUtc() + 41 * DAY,
+    });
+
+    await t.mutation(internal.automation.recordReminder, {
+      loanId: first.loanId as Id<"loans">,
+      idempotencyKey: "reused-key",
+      channel: "mock",
+      detail: "first",
+    });
+
+    const reused = await t.mutation(internal.automation.recordReminder, {
+      loanId: secondLoanId,
+      idempotencyKey: "reused-key",
+      channel: "mock",
+      detail: "second",
+    });
+
+    expect(reused.conflict).toBe(true);
   });
 });

@@ -13,14 +13,14 @@ export function AuthCta({ size = "lg" }: { size?: "default" | "lg" }) {
   return (
     <div className="flex flex-wrap items-center gap-3">
       <Show when="signed-out">
-        <SignUpButton mode="modal">
-          <Button className={height}>Sign in to lend or borrow</Button>
-        </SignUpButton>
         <SignInButton mode="modal">
-          <Button variant="outline" className={height}>
-            I already have an account
-          </Button>
+          <Button className={height}>Sign in to lend or borrow</Button>
         </SignInButton>
+        <SignUpButton mode="modal">
+          <Button variant="outline" className={height}>
+            Create an account
+          </Button>
+        </SignUpButton>
       </Show>
       <Show when="signed-in">
         <Button asChild className={height}>
