@@ -1,0 +1,184 @@
+{
+  "name": "LendLoop \u2014 Overdue reminders",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "b1000000-0000-4000-8000-000000000009",
+      "name": "Manual test trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-440, 200]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 8,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "b1000000-0000-4000-8000-000000000001",
+      "name": "Daily at 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-440, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Signs the GET request. GET has no body, so the empty string is what is signed.\nconst crypto = require('crypto');\nconst secret = $env.LENDLOOP_SHARED_SECRET;\nif (!secret) throw new Error('LENDLOOP_SHARED_SECRET is not set on the n8n container');\n\nconst timestamp = String(Math.floor(Date.now() / 1000));\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.`).digest('hex');\n\nreturn [{ json: { timestamp, signature } }];"
+      },
+      "id": "b1000000-0000-4000-8000-000000000002",
+      "name": "Sign request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-220, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.LENDLOOP_SITE_URL }}/automation/overdue",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-lendloop-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-lendloop-signature",
+              "value": "={{ $json.signature }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b1000000-0000-4000-8000-000000000003",
+      "name": "Fetch overdue loans",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [0, 0],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Turns the response into one item per loan, each with its own signature and\n// idempotency key. The HTTP node downstream then runs once per item.\nconst crypto = require('crypto');\nconst secret = $env.LENDLOOP_SHARED_SECRET;\n\nconst response = $input.first().json;\nconst loans = Array.isArray(response.loans) ? response.loans : [];\nconst today = new Date().toISOString().slice(0, 10);\n\nconst output = [];\n\nfor (const loan of loans) {\n  if (!loan.loanId || !loan.daysOverdue || loan.daysOverdue <= 0) continue;\n\n  const dueDate = new Date(loan.dueDate).toISOString().slice(0, 10);\n  const message = `Your loan of ${loan.toolName} was due ${dueDate} and is ${loan.daysOverdue} day(s) late. Please return it to your neighbor.`;\n\n  // Mock notification. Replace with an Email node; the signature logic is identical.\n  console.log(`[LENDLOOP MOCK] to=${loan.borrowerEmail ?? 'unknown'} subject=Overdue: ${loan.toolName} | ${message}`);\n\n  const body = JSON.stringify({\n    loanId: loan.loanId,\n    channel: 'mock',\n    detail: `Overdue reminder for ${loan.toolName} (${loan.daysOverdue}d late)`,\n  });\n\n  const timestamp = String(Math.floor(Date.now() / 1000));\n  const signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');\n\n  output.push({\n    json: {\n      loanId: loan.loanId,\n      body,\n      timestamp,\n      signature,\n      // Derived from data, so a retried run and a duplicate schedule run produce\n      // the same key and the write-back collapses to one record.\n      idempotencyKey: `reminder:${loan.loanId}:${loan.dueDate}:${today}`,\n      message,\n    },\n  });\n}\n\nreturn output;"
+      },
+      "id": "b1000000-0000-4000-8000-000000000004",
+      "name": "Build signed reminders",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LENDLOOP_SITE_URL }}/automation/reminders",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-lendloop-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-lendloop-signature",
+              "value": "={{ $json.signature }}"
+            },
+            {
+              "name": "idempotency-key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.body }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "b1000000-0000-4000-8000-000000000005",
+      "name": "Record reminder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 0],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Daily at 08:00": {
+      "main": [
+        [
+          {
+            "node": "Sign request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign request": {
+      "main": [
+        [
+          {
+            "node": "Fetch overdue loans",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch overdue loans": {
+      "main": [
+        [
+          {
+            "node": "Build signed reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build signed reminders": {
+      "main": [
+        [
+          {
+            "node": "Record reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual test trigger": {
+      "main": [
+        [
+          {
+            "node": "Sign request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": ""
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}

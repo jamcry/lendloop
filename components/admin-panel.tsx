@@ -60,6 +60,7 @@ export function AdminPanel() {
         <TabsTrigger value="loans">Loans</TabsTrigger>
         <TabsTrigger value="users">Users</TabsTrigger>
         <TabsTrigger value="activity">Activity</TabsTrigger>
+        <TabsTrigger value="automation">Automation</TabsTrigger>
       </TabsList>
 
       <TabsContent value="overview">
@@ -76,6 +77,9 @@ export function AdminPanel() {
       </TabsContent>
       <TabsContent value="activity">
         <ActivityFeed />
+      </TabsContent>
+      <TabsContent value="automation">
+        <AutomationFeed />
       </TabsContent>
     </Tabs>
   );
@@ -348,5 +352,63 @@ function ActivityFeed() {
         </li>
       ))}
     </ol>
+  );
+}
+
+/**
+ * Everything the workflow layer did recently. Failed notifications are the reason
+ * this exists: an integration that breaks quietly is worse than one that fails.
+ */
+function AutomationFeed() {
+  const rows = useQuery(api.automation.recentActivity);
+  if (rows === undefined) return <Skeleton className="h-32 w-full rounded-xl" />;
+
+  if (rows.length === 0) {
+    return (
+      <div className="text-muted-foreground rounded-xl border border-dashed py-16 text-center text-sm">
+        No automation activity yet. Notifications appear here once n8n calls back.
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-hidden rounded-xl border">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Event</TableHead>
+            <TableHead>Detail</TableHead>
+            <TableHead>Channel</TableHead>
+            <TableHead>When</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((row) => (
+            <TableRow key={row._id}>
+              <TableCell className="font-mono text-xs whitespace-nowrap">
+                <span
+                  className={
+                    row.kind === "notification.failed" || row.kind === "workflow.failed"
+                      ? "text-red-600 dark:text-red-400"
+                      : "text-muted-foreground"
+                  }
+                >
+                  {row.kind}
+                </span>
+              </TableCell>
+              <TableCell className="text-muted-foreground max-w-md truncate text-sm">
+                {row.detail}
+              </TableCell>
+              <TableCell className="text-muted-foreground text-xs">
+                {row.channel}
+              </TableCell>
+              <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
+                {relativeTime(row.createdAt)}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 }

@@ -8,6 +8,7 @@ import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { LoanActivity } from "@/components/loan-activity";
 import { AvailabilityPill, StatusPill, TrustedPill } from "@/components/status-pill";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -144,6 +145,13 @@ export function ToolDetail({ toolId }: { toolId: Id<"tools"> }) {
                     : "The lender approved this. Collect it on the start date."}
                 </p>
                 {myLoan.status === "pending" ? <CancelButton loanId={myLoan.id} /> : null}
+
+                <div className="space-y-2 border-t pt-3">
+                  <p className="text-muted-foreground font-mono text-[11px] tracking-wider uppercase">
+                    Automation
+                  </p>
+                  <LoanActivity loanId={myLoan.id} compact />
+                </div>
               </CardContent>
             </Card>
           ) : (

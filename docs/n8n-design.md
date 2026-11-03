@@ -1,12 +1,12 @@
 # n8n integration — design (not implemented)
 
-**Status: design only.** The application is complete; the automation layer is
-deliberately stubbed. The integration points exist in `convex/automation.ts` as
-`TODO(n8n)` markers, and `GET /automation/*` endpoints are not yet mounted. No
-workflow JSON is exported, because shipping JSON that has never been imported is
-worse than shipping a clear plan.
+**Status: implemented.** This document records the design and the reasoning
+behind it. The as-built summary, setup steps, and verification results live in
+the [README](../README.md#automation); the workflows themselves are in
+[`n8n/workflows/`](../n8n/workflows/).
 
-This document is what I would build, and why.
+One thing changed between design and build, and it is the interesting part — see
+[Signing](#3-signing-app--n8n).
 
 ---
 
@@ -74,7 +74,15 @@ X-LendLoop-Timestamp: 1767225600
 X-LendLoop-Signature: <hex hmac-sha256>
 ```
 
-Signature is `HMAC_SHA256(secret, timestamp + "." + rawBodyBytes)`.
+Signature is `HMAC_SHA256(secret, timestamp + "." + canonicalJson(body))`.
+
+**Why canonical JSON and not raw bytes:** the original design signed the raw body.
+That verified perfectly from `curl` and failed from n8n, because n8n parses the
+JSON and hands the Code node an object — re-serializing it does not reproduce the
+sender's bytes. Signing a canonical form (object keys sorted, no whitespace, no
+`undefined`) removes the dependency on byte-identity: both sides compute the same
+string from the same data. The first live test against n8n returned
+`401 Invalid signature` and this was the cause.
 
 - Timestamp is inside the signed string, so a captured body cannot be replayed
   with a fresh timestamp.
@@ -117,6 +125,9 @@ spoofed either. That is the "secure in both directions" requirement.
 ## 5. Workflows
 
 ### `request-notification.json`
+
+(single Code node rather than a Switch — fewer places to get JSON wrong, and the
+message routing is three lines of JS)
 
 ```
 Webhook (POST, responds immediately)
@@ -172,11 +183,14 @@ sends is treated as untrusted input:
 An attacker with full control of the n8n instance can mark a reminder as sent for
 an existing loan. That is the complete blast radius, which is the correct size.
 
-## 7. What I would verify before calling this done
+## 7. Verification actually performed
 
-1. Replay a captured webhook body after 6 minutes → rejected.
-2. Replay it within the window → rejected by idempotency, `duplicate: true`.
-3. Point the webhook at a dead host → job retries, then surfaces as `failed` in
-   the activity list.
-4. Run the daily workflow twice in one day → one email, one activity row.
-5. Grep the exported JSON for the secret → zero hits.
+1. Replay outside the window → `401 Signature stale`. ✅
+2. Replay within the window → `{ duplicate: true }`, one row. ✅
+3. Dead host → five attempts with backoff, then `notification.failed` visible in
+   the admin Automation tab. ✅ (covered by test, since the live deployment's
+   webhook URL points at a local port it cannot reach)
+4. Daily workflow run twice → one reminder row. ✅
+5. Grep the exported JSON for the secret → no hits. ✅
+
+See the README's "Verified end to end" table for the full list.

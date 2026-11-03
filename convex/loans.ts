@@ -9,6 +9,7 @@ import {
   requireViewer,
   type Viewer,
 } from "./lib/authz";
+import { enqueueLoanEvent } from "./automation";
 import { assertRangeIsFree, isOverdue } from "./lib/loans";
 import { assertLoanRange, cleanText, MAX_MESSAGE_LENGTH } from "./lib/validation";
 
@@ -85,7 +86,7 @@ export const request = mutation({
     }
 
     const now = Date.now();
-    return await ctx.db.insert("loans", {
+    const loanId = await ctx.db.insert("loans", {
       toolId: tool._id,
       ownerId: tool.ownerId,
       borrowerId: viewer._id,
@@ -102,6 +103,23 @@ export const request = mutation({
       createdAt: now,
       updatedAt: now,
     });
+
+    // Same transaction as the insert: the notification cannot be lost or doubled.
+    await enqueueLoanEvent(
+      ctx,
+      {
+        _id: loanId,
+        toolId: tool._id,
+        borrowerId: viewer._id,
+        ownerId: tool.ownerId,
+        status: "pending",
+        startDate: args.startDate,
+        endDate: args.endDate,
+      },
+      "loan.requested",
+    );
+
+    return loanId;
   },
 });
 
@@ -136,6 +154,8 @@ export const decide = mutation({
       decidedAt: Date.now(),
       updatedAt: Date.now(),
     });
+
+    await enqueueLoanEvent(ctx, { ...loan, status: decision }, "loan.status_changed");
   },
 });
 
@@ -157,6 +177,8 @@ export const cancel = mutation({
       status: "cancelled",
       updatedAt: Date.now(),
     });
+
+    await enqueueLoanEvent(ctx, { ...loan, status: "cancelled" }, "loan.status_changed");
   },
 });
 
@@ -179,6 +201,8 @@ export const markReturned = mutation({
       returnedAt: Date.now(),
       updatedAt: Date.now(),
     });
+
+    await enqueueLoanEvent(ctx, { ...loan, status: "returned" }, "loan.status_changed");
   },
 });
 

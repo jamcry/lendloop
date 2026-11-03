@@ -122,4 +122,52 @@ export default defineSchema({
   })
     .index("by_created", ["createdAt"])
     .index("by_target", ["targetType", "targetId"]),
+
+  /**
+   * Transactional outbox for the n8n integration.
+   *
+   * A loan mutation writes its state change and the intent to notify in one
+   * transaction, then schedules `automation.deliver`. A crash between the two
+   * cannot lose a notification, and a retried mutation cannot produce a second
+   * one, because the job is keyed to a specific loan event.
+   */
+  automationJobs: defineTable({
+    eventKey: v.string(),
+    kind: v.union(v.literal("loan.requested"), v.literal("loan.status_changed")),
+    loanId: v.id("loans"),
+    payload: v.any(),
+    status: v.union(v.literal("pending"), v.literal("sent"), v.literal("failed")),
+    attempts: v.number(),
+    nextAttemptAt: v.number(),
+    lastError: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_status_next", ["status", "nextAttemptAt"])
+    .index("by_event_key", ["eventKey"])
+    .index("by_loan", ["loanId"]),
+
+  /**
+   * What the automation layer actually did, shown in the app.
+   *
+   * `dedupeKey` is the idempotency key from n8n write-backs. The check and the
+   * insert happen in one mutation, so a retried write-back collapses instead of
+   * creating a second "reminder sent" row.
+   */
+  loanActivity: defineTable({
+    loanId: v.id("loans"),
+    kind: v.union(
+      v.literal("notification.sent"),
+      v.literal("notification.failed"),
+      v.literal("reminder.sent"),
+      v.literal("workflow.failed"),
+    ),
+    channel: v.string(),
+    detail: v.string(),
+    dedupeKey: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_loan_created", ["loanId", "createdAt"])
+    .index("by_created", ["createdAt"])
+    .index("by_dedupe", ["dedupeKey"]),
 });

@@ -9,6 +9,13 @@ services:
       # Secrets come from n8n/.env, never from this file.
       - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:?set N8N_ENCRYPTION_KEY in n8n/.env}
       - LENDLOOP_SHARED_SECRET=${LENDLOOP_SHARED_SECRET:?set LENDLOOP_SHARED_SECRET in n8n/.env}
+      # Convex HTTP actions base URL, e.g. https://your-deployment.convex.site
+      - LENDLOOP_SITE_URL=${LENDLOOP_SITE_URL:?set LENDLOOP_SITE_URL in n8n/.env}
+      # The Code nodes verify HMAC signatures, which needs Node's crypto module.
+      # n8n blocks builtins by default.
+      - NODE_FUNCTION_ALLOW_BUILTIN=crypto
+      # Code nodes read secrets via $env.*, which requires node env access.
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
       - N8N_HOST=localhost
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
@@ -20,6 +27,9 @@ services:
       - N8N_USER_MANAGEMENT_DISABLED=false
     volumes:
       - n8n_data:/home/node/.n8n
+      # Workflows are imported from here; mounted read-only so a running
+      # instance can never rewrite the exported JSON in the repo.
+      - ./workflows:/workflows:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:5678/healthz || exit 1"]
       interval: 30s

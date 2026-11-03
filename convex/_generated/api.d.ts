@@ -10,25 +10,25 @@
 
 import type * as admin from "../admin.js";
 import type * as automation from "../automation.js";
+import type * as http from "../http.js";
 import type * as lib_authz from "../lib/authz.js";
 import type * as lib_loans from "../lib/loans.js";
+import type * as lib_signing from "../lib/signing.js";
 import type * as lib_validation from "../lib/validation.js";
 import type * as loans from "../loans.js";
 import type * as seed from "../seed.js";
 import type * as tools from "../tools.js";
 import type * as users from "../users.js";
 
-import type {
-  ApiFromModules,
-  FilterApi,
-  FunctionReference,
-} from "convex/server";
+import type { ApiFromModules, FilterApi, FunctionReference } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
   admin: typeof admin;
   automation: typeof automation;
+  http: typeof http;
   "lib/authz": typeof lib_authz;
   "lib/loans": typeof lib_loans;
+  "lib/signing": typeof lib_signing;
   "lib/validation": typeof lib_validation;
   loans: typeof loans;
   seed: typeof seed;
@@ -44,10 +44,7 @@ declare const fullApi: ApiFromModules<{
  * const myFunctionReference = api.myModule.myFunction;
  * ```
  */
-export declare const api: FilterApi<
-  typeof fullApi,
-  FunctionReference<any, "public">
->;
+export declare const api: FilterApi<typeof fullApi, FunctionReference<any, "public">>;
 
 /**
  * A utility for referencing Convex functions in your app's internal API.

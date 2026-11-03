@@ -1,0 +1,67 @@
+{
+  "name": "LendLoop — Error handler",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "c1000000-0000-4000-8000-000000000001",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [-440, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Reports a failed execution back to LendLoop so it is visible in the app and\n// not only in n8n's execution history.\nconst crypto = require('crypto');\nconst secret = $env.LENDLOOP_SHARED_SECRET;\nconst siteUrl = $env.LENDLOOP_SITE_URL;\n\nconst trigger = $input.first().json;\nconst execution = trigger.execution ?? {};\nconst workflow = trigger.workflow ?? {};\n\nconst executionId = String(execution.id ?? 'unknown');\nconst workflowName = String(workflow.name ?? 'unknown workflow');\nconst lastNode = String(execution.lastNodeExecuted ?? 'unknown node');\nconst errorMessage =\n  execution.error?.message ?? execution.data?.resultData?.error?.message ?? 'Unknown error';\n\nconst body = JSON.stringify({\n  workflow: workflowName,\n  detail: `${lastNode}: ${errorMessage}`.slice(0, 280),\n});\n\nconst timestamp = String(Math.floor(Date.now() / 1000));\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');\n\nreturn [\n  {\n    json: {\n      body,\n      timestamp,\n      signature,\n      // One notification per failed execution, so a retried report collapses.\n      idempotencyKey: `workflow-failure:${workflowName}:${executionId}`,\n    },\n  },\n];"
+      },
+      "id": "c1000000-0000-4000-8000-000000000002",
+      "name": "Prepare failure report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-220, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LENDLOOP_SITE_URL }}/automation/failures",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-lendloop-timestamp", "value": "={{ $json.timestamp }}" },
+            { "name": "x-lendloop-signature", "value": "={{ $json.signature }}" },
+            { "name": "idempotency-key", "value": "={{ $json.idempotencyKey }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.body }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "c1000000-0000-4000-8000-000000000003",
+      "name": "Report to LendLoop",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [0, 0],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [[{ "node": "Prepare failure report", "type": "main", "index": 0 }]]
+    },
+    "Prepare failure report": {
+      "main": [[{ "node": "Report to LendLoop", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "pinData": {},
+  "tags": []
+}

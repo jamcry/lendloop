@@ -125,3 +125,68 @@ export const populate = internalMutation({
     return { seeded: true, tools: DEMO_TOOLS.length };
   },
 });
+
+const DEMO_BORROWER_CLERK_ID = "seed|lendloop-borrower";
+
+/**
+ * Creates one approved loan that is already overdue, so the daily reminder
+ * workflow has something real to find on a fresh deployment.
+ *
+ *   npx convex run seed:createDemoOverdueLoan
+ *
+ * Same SEED_ENABLED guard as `populate`; never runs on a real environment.
+ */
+export const createDemoOverdueLoan = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    if (process.env.SEED_ENABLED !== "true") {
+      throw new Error(
+        "Seeding is disabled. Set it with: npx convex env set SEED_ENABLED true",
+      );
+    }
+
+    const existing = await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", DEMO_BORROWER_CLERK_ID))
+      .unique();
+
+    const now = Date.now();
+    const day = 86_400_000;
+    const today = Math.floor(now / day) * day;
+
+    const borrowerId =
+      existing?._id ??
+      (await ctx.db.insert("users", {
+        clerkId: DEMO_BORROWER_CLERK_ID,
+        name: "Demo Borrower",
+        email: "borrower@lendloop.local",
+        role: "user",
+        trustedLender: false,
+        createdAt: now,
+      }));
+
+    const tool = await ctx.db
+      .query("tools")
+      .withIndex("by_archived", (q) => q.eq("archivedAt", undefined))
+      .first();
+
+    if (!tool) {
+      throw new Error("Run seed:populate first so there is a tool to borrow.");
+    }
+
+    const loanId = await ctx.db.insert("loans", {
+      toolId: tool._id,
+      ownerId: tool.ownerId,
+      borrowerId,
+      startDate: today - 5 * day,
+      endDate: today - 2 * day,
+      status: "approved",
+      message: "Seeded demo loan, already overdue.",
+      decidedAt: now - 6 * day,
+      createdAt: now - 6 * day,
+      updatedAt: now - 6 * day,
+    });
+
+    return { loanId, toolName: tool.name };
+  },
+});

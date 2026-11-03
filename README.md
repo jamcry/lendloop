@@ -8,9 +8,10 @@ and manage trusted lenders.
 
 Built with Next.js (App Router), Clerk, Convex and TypeScript.
 
-**Status:** the application is complete and tested. The n8n automation layer is
-designed but **not implemented** — see [Automation](#automation-status) and
-[`docs/n8n-design.md`](docs/n8n-design.md).
+**Status:** complete. The app, the role-based access control, and the n8n
+automation layer (signed webhooks, scheduled reminders, idempotent write-backs,
+retries and an error workflow) are implemented and tested. See
+[Automation](#automation) for what was verified and how.
 
 ---
 
@@ -188,24 +189,109 @@ fails.
 
 ---
 
-## Automation status
+## Automation
 
-**Not implemented.** Per the agreed scope, the n8n work is a documented design
-with `TODO(n8n)` markers rather than fake plumbing.
+Three n8n workflows, all in [`n8n/workflows/`](n8n/workflows/):
 
-What exists:
+| Workflow                    | Trigger           | What it does                                                                    |
+| --------------------------- | ----------------- | ------------------------------------------------------------------------------- |
+| `request-notification.json` | Convex webhook    | Verifies the HMAC, renders the right message for lender or borrower, returns it |
+| `overdue-reminders.json`    | Daily 08:00       | Fetches overdue loans, notifies each borrower, writes the reminder back         |
+| `error-handler.json`        | n8n error trigger | Reports failed runs to the app so they are visible to admins                    |
 
-- `convex/automation.ts` — the exact integration points, plus a working
-  `overdueLoans` query (only the fields a reminder needs).
-- `docs/n8n-design.md` — outbox pattern, HMAC scheme over `timestamp + "." + body`,
-  replay window, idempotent write-back keys, retry ladder, error workflow.
-- `n8n/docker-compose.yml` — a local n8n with secrets wired from the environment.
+### Reliability: the outbox
 
-What does not exist: workflow JSON, the HTTP endpoints, and the activity feed. The
-bonus "reminder sent 2 days ago" UI is therefore also absent — I would rather have
-no panel than an empty one.
+A loan mutation writes the state change and an `automationJobs` row **in one
+transaction**, then schedules delivery:
 
----
+```
+mutation                                  action (can use fetch)
+├─ write loan status change               ├─ read job
+└─ insert automationJobs (pending) ───────┤─ sign, POST to n8n
+                                          ├─ ok      → sent + activity row
+                                          └─ failure → retry 30s→2m→10m→1h→4h
+                                                       then failed + visible row
+```
+
+The state change and the intent to notify commit together or not at all. Convex
+retries a failed mutation by rolling it back, so a retry cannot insert a second
+job. After the last attempt the job is marked `failed` **and** a
+`notification.failed` activity row is written, which shows up in the admin
+Automation tab — nothing fails silently.
+
+### Security: signing in both directions
+
+`signature = HMAC_SHA256(secret, timestamp + "." + canonicalJson(body))`
+
+- The timestamp is inside the signed string, so a captured body can't be replayed
+  with a fresh timestamp; receivers reject anything older than 5 minutes.
+- **Canonical JSON** (sorted keys, no whitespace) is used because n8n receives
+  _parsed_ JSON, not our original bytes. Both sides compute the same canonical
+  form, so the signature is independent of key order and pretty-printing. This
+  was a real bug the first time: signing raw bytes verified fine from `curl` and
+  failed from n8n.
+- Comparison is constant-time.
+- Incremental parsing never happens before verification.
+- Secrets live in Convex deployment env and `n8n/.env`; the exported JSON contains
+  only `{{ $env.LENDLOOP_SHARED_SECRET }}` references.
+
+Both HTTP endpoints fail closed with `503` if the secret is unset.
+
+### Idempotent write-backs
+
+```
+POST /automation/reminders
+Idempotency-Key: reminder:<loanId>:<dueDate>:<daystamp>
+```
+
+The key is derived from data, so a retried delivery and a duplicate schedule run
+collapse onto the same row. The lookup and insert happen in one serializable
+mutation. A replay returns `200 { duplicate: true }` rather than a conflict,
+because for n8n a retry that already succeeded is a success.
+
+### What n8n can and cannot do
+
+The endpoints can only append activity to a loan that already exists. n8n cannot
+change loan status, reassign ownership, or touch any other table. An attacker
+with full control of the n8n instance can mark a reminder as sent for an existing
+loan — that is the entire blast radius.
+
+### Verified end to end
+
+Against the real deployment and a real n8n container (v2.46.4):
+
+| Check                               | Result                               |
+| ----------------------------------- | ------------------------------------ |
+| Unsigned request                    | `401`                                |
+| Signed request                      | `200`                                |
+| Stale timestamp (10 min)            | `401`                                |
+| Tampered body                       | `401`                                |
+| POST without idempotency key        | `400`                                |
+| Reminder write-back                 | `{ duplicate: false }`               |
+| Replay of the same key              | `{ duplicate: true }`                |
+| Unknown loan id                     | `404`                                |
+| Signed event from n8n's perspective | `200`, correct recipient and message |
+| Forged signature at n8n webhook     | `401`                                |
+| Daily workflow run twice            | **one** reminder row                 |
+
+40 automated tests cover the signature scheme (including a known-answer vector
+computed independently in Python), the outbox, the retry ladder, idempotency, and
+the overdue query.
+
+### Local n8n
+
+```bash
+cd n8n && cp .env.example .env    # then fill in the three values
+docker compose up -d
+```
+
+Then import and publish the workflows — see [`n8n/README.md`](n8n/README.md).
+
+**One caveat worth stating plainly:** Convex runs in the cloud, so it cannot reach
+`localhost:5678`. For real webhook delivery in local development you need a
+tunnel (e.g. `ngrok http 5678`) and must set `N8N_WEBHOOK_URL` to it. Without
+that, outbound jobs fail loudly and visibly — which is the designed behaviour,
+not a bug.
 
 ## Security decisions
 
@@ -237,7 +323,7 @@ no panel than an empty one.
 ## Testing
 
 ```bash
-npm test        # 23 tests, convex-test, no deployment or keys needed
+npm test        # 40 tests, convex-test, no deployment or keys needed
 npm run typecheck
 npm run lint
 npm run build
@@ -276,8 +362,11 @@ convex/
   lib/validation.ts       # pure input + date-range rules
   lib/loans.ts            # availability map, overlap check, overdue predicate
   users.ts tools.ts loans.ts admin.ts
-  automation.ts           # TODO(n8n) integration points
-  lendloop.test.ts        # 23 tests
+  http.ts                 # signed inbound endpoints (overdue, reminders, failures)
+  automation.ts           # outbox, delivery with retries, idempotent write-back
+  lib/signing.ts          # HMAC + canonical JSON
+  lendloop.test.ts        # 24 tests
+  automation.test.ts      # 16 tests
   seed.ts
 docs/n8n-design.md
 n8n/                      # compose + compose README
