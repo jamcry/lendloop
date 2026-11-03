@@ -576,3 +576,27 @@ describe("archived listings with pending requests", () => {
     expect(loan?.status).toBe("declined");
   });
 });
+
+describe("mutations refuse instead of silently no-oping", () => {
+  it("rejects an archive from a caller with no mirrored account", async () => {
+    const t = setup();
+    const toolId = await createTool(t, alice);
+
+    // A valid identity that has never been synced has no users row. A mutation
+    // must fail loudly: returning success here would let the UI toast
+    // "Listing removed" for a write that never happened.
+    const ghost = t.withIdentity({
+      tokenIdentifier: "clerk|ghost",
+      subject: "ghost",
+      email: "ghost@example.com",
+      name: "Ghost",
+    });
+
+    await expect(ghost.mutation(api.tools.archive, { id: toolId })).rejects.toThrow(
+      /signed in/i,
+    );
+
+    const tool = await t.run(async (ctx) => ctx.db.get(toolId));
+    expect(tool?.archivedAt).toBeUndefined();
+  });
+});

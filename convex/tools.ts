@@ -229,8 +229,9 @@ export const update = mutation({
 export const archive = mutation({
   args: { id: v.id("tools") },
   handler: async (ctx, { id }) => {
-    const viewer = await getViewer(ctx);
-    if (!viewer) return null;
+    // A mutation, not a query: refuse outright rather than silently doing
+    // nothing, which would let the UI report a success that never happened.
+    const viewer = await requireViewer(ctx);
 
     const tool = await ctx.db.get(id);
     if (!tool) notFound("Tool");

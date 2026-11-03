@@ -1,7 +1,7 @@
 /**
  * HMAC signing for the n8n integration, in both directions.
  *
- * Scheme: `signature = HMAC_SHA256(secret, timestamp + "." + rawBody)`, hex
+ * Scheme: `signature = HMAC_SHA256(secret, timestamp + "." + canonicalJson(body))`, hex
  * encoded. The timestamp is inside the signed string, so a captured body cannot
  * be replayed with a fresh timestamp. Receivers reject anything outside a
  * five-minute window.

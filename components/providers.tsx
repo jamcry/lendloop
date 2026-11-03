@@ -28,20 +28,23 @@ function UserSync() {
     // with empty screens until they reload.
     let cancelled = false;
     let attempt = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     const run = async () => {
+      if (cancelled) return;
       try {
         await syncUser({});
       } catch {
         if (cancelled || attempt >= 3) return;
         attempt += 1;
-        setTimeout(run, 600 * attempt);
+        timer = setTimeout(run, 600 * attempt);
       }
     };
 
     void run();
     return () => {
       cancelled = true;
+      if (timer) clearTimeout(timer);
     };
   }, [isSignedIn, syncUser]);
 

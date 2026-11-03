@@ -129,8 +129,9 @@ resolves an identity), `loans.by_tool` (overlap checks), `loans.by_owner` and
 `loans.by_borrower` (the two inbox views), `loans.by_status_end` (the overdue
 query), `automationJobs.by_status_next` (failed-delivery view),
 `loanActivity.by_dedupe` (idempotency lookups), `tools.by_owner`,
-`tools.by_category`. Indexes with no reader were removed rather than kept for
-appearance.
+`tools.by_category`, `tools.by_archived`, `loanActivity.by_created` and
+`loanActivity.by_loan_created`. Indexes with no reader were removed rather than
+kept for appearance.
 
 Three decisions worth defending:
 
@@ -192,7 +193,7 @@ Four things this does deliberately:
   path. Admins who are not in the env var are managed normally from the panel.
 
 These are not just asserted — `convex/lendloop.test.ts` runs the negative cases as
-multiple mocked users (30 tests). A non-admin calling `admin.allUsers` fails. A
+multiple mocked users (31 tests). A non-admin calling `admin.allUsers` fails. A
 borrower approving their own request fails. An unrelated user reading a loan
 fails.
 
@@ -291,7 +292,7 @@ Against the real deployment and a real n8n container (v2.46.4):
 | Forged signature at n8n webhook     | `401`                                |
 | Daily workflow run twice            | **one** reminder row                 |
 
-61 automated tests cover the signature scheme (including a known-answer vector
+62 automated tests cover the signature scheme (including a known-answer vector
 computed independently in Python), the HTTP endpoints through `t.fetch`, the
 outbox and its retry ladder, idempotency, and the overdue query.
 
@@ -329,7 +330,7 @@ not a bug.
   available — a tool that is out on loan is not listed. No owner, condition,
   description, or count of loans. Verified by tests that assert the exact key set
   and that a lent tool disappears and reappears.
-- **`users.me`:** name, avatar, role, trusted flag. Not the email.
+- **`users.me`:** id, name, avatar, role, trusted flag. Not the email.
 - **Emails:** stored in `users` because the automation layer needs a destination,
   and returned only to admins (the admin panel is the only place they appear).
 - **n8n payloads:** the request event carries only the recipient's email, plus
@@ -343,7 +344,7 @@ not a bug.
 ## Testing
 
 ```bash
-npm test        # 61 tests, convex-test, no deployment or keys needed
+npm test        # 62 tests, convex-test, no deployment or keys needed
 npm run typecheck
 npm run lint
 npm run build
@@ -385,7 +386,7 @@ convex/
   http.ts                 # signed inbound endpoints (overdue, reminders, failures)
   automation.ts           # outbox, delivery with retries, idempotent write-back
   lib/signing.ts          # HMAC + canonical JSON
-  lendloop.test.ts        # 30 tests
+  lendloop.test.ts        # 31 tests
   automation.test.ts      # 19 tests
   http.test.ts            # 12 tests
   seed.ts

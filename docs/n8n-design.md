@@ -25,7 +25,7 @@ mutation (transactional)                    action (retryable, has fetch)
    {kind, loanId, payload, status: pending} │─ POST to n8n
                                             ├─ success → status: sent
                                             └─ failure → attempts++, nextAttemptAt,
-                                                          status: failed (after 5)
+                                                          status: failed (after 6 attempts)
 ```
 
 The state change and the intent to notify commit together or not at all. A crash
@@ -138,7 +138,7 @@ The reminder is **claimed first, then sent**. The workflow posts the idempotent
 write-back, and only items where the response says `duplicate: false` proceed to
 the notification node. Ordering it the other way — send, then record — makes "run
 twice, get one reminder" true of the database and false of the borrower's inbox.
-Verified: 3 overdue loans, 3 claims, 1 notification sent.
+Verified with 3 overdue loans: 3 claim attempts, 2 rejected as duplicates, 1 new claim, therefore 1 notification sent.
 
 Inbound requests authenticate the same way (HMAC + timestamp), so n8n cannot be
 spoofed either. That is the "secure in both directions" requirement.
@@ -214,7 +214,7 @@ an existing loan. That is the complete blast radius, which is the correct size.
 
 1. Replay outside the window → `401 Signature stale`. ✅
 2. Replay within the window → `{ duplicate: true }`, one row. ✅
-3. Dead host → five attempts with backoff, then `notification.failed` visible in
+3. Dead host → six attempts with backoff, then `notification.failed` visible in
    the admin Automation tab. ✅ (covered by test, since the live deployment's
    webhook URL points at a local port it cannot reach)
 4. Daily workflow run twice → one reminder row. ✅
