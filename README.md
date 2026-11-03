@@ -130,8 +130,9 @@ resolves an identity), `loans.by_tool` (overlap checks), `loans.by_owner` and
 query), `automationJobs.by_status_next` (failed-delivery view),
 `loanActivity.by_dedupe` (idempotency lookups), `tools.by_owner`,
 `tools.by_category`, `tools.by_archived`, `loanActivity.by_created` and
-`loanActivity.by_loan_created`. Indexes with no reader were removed rather than
-kept for appearance.
+`loanActivity.by_loan_created`, plus `automationJobs.by_loan`, which only the
+tests read. Indexes with no reader at all were removed rather than kept for
+appearance.
 
 Three decisions worth defending:
 

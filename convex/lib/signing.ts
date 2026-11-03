@@ -1,10 +1,15 @@
 /**
  * HMAC signing for the n8n integration, in both directions.
  *
- * Scheme: `signature = HMAC_SHA256(secret, timestamp + "." + canonicalJson(body))`, hex
- * encoded. The timestamp is inside the signed string, so a captured body cannot
- * be replayed with a fresh timestamp. Receivers reject anything outside a
- * five-minute window.
+ * Scheme: `signature = HMAC_SHA256(secret, timestamp + "." + body)`, hex encoded.
+ *
+ * Senders pass a canonical string (`canonicalJson`) so the value is independent of
+ * key order. This verifier signs the bytes it is given, which is what allows n8n
+ * to sign its own `JSON.stringify` output and what makes the inbound direction
+ * exact-bytes rather than canonical.
+ *
+ * The timestamp is inside the signed string, so a captured body cannot be replayed
+ * with a fresh timestamp. Receivers reject anything outside a five-minute window.
  *
  * Uses Web Crypto, which is what the Convex runtime provides, so the same code
  * runs for outbound signing (action) and inbound verification (httpAction).

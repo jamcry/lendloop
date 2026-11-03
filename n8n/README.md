@@ -81,7 +81,8 @@ ngrok http 5678
 npx convex env set N8N_WEBHOOK_URL https://<your-id>.ngrok-free.app/webhook/lendloop/request-event
 ```
 
-Without a tunnel, outbound jobs retry five times and then show as
+Without a tunnel, outbound jobs retry five times (six attempts in total, over
+about six hours) and then show as
 `notification.failed` in the admin Automation tab. That is the designed failure
 mode — it is how you _know_ the integration is not wired up, instead of never
 finding out.

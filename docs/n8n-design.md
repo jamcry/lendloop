@@ -138,7 +138,9 @@ The reminder is **claimed first, then sent**. The workflow posts the idempotent
 write-back, and only items where the response says `duplicate: false` proceed to
 the notification node. Ordering it the other way — send, then record — makes "run
 twice, get one reminder" true of the database and false of the borrower's inbox.
-Verified with 3 overdue loans: 3 claim attempts, 2 rejected as duplicates, 1 new claim, therefore 1 notification sent.
+Verified by running the workflow twice against 3 overdue loans: the first run
+claimed and notified, the second run reported `duplicate: true` for every loan and
+sent nothing.
 
 Inbound requests authenticate the same way (HMAC + timestamp), so n8n cannot be
 spoofed either. That is the "secure in both directions" requirement.
