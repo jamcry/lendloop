@@ -62,6 +62,24 @@ async function verifySignature(request: Request, body: string): Promise<Verifica
   return { ok: true };
 }
 
+/**
+ * Maps a failed write-back to the right status.
+ *
+ * Both cases are caller errors, but they surface differently: a malformed id is
+ * rejected by the validator before the handler runs, while a well-formed id that
+ * points at nothing reaches the handler. Anything else is a real fault and must
+ * stay a 500 so n8n retries instead of dropping it.
+ */
+function writeBackErrorResponse(error: unknown): Response | null {
+  if (error instanceof ConvexError && error.data === "Unknown loan.") {
+    return json({ error: "Unknown loan." }, 404);
+  }
+  if (error instanceof Error && error.message.includes("ArgumentValidation")) {
+    return json({ error: "Invalid loanId." }, 400);
+  }
+  return null;
+}
+
 /** Returns the idempotency key, or a 400 response. */
 function requireIdempotencyKey(
   request: Request,
@@ -157,11 +175,8 @@ http.route({
 
       return json({ ok: true, duplicate: result.duplicate });
     } catch (error) {
-      // Only an unknown loan is a 404. Anything else (a write conflict, a
-      // deployment problem) is a 500, so n8n retries instead of dropping it.
-      if (error instanceof ConvexError && error.data === "Unknown loan.") {
-        return json({ error: "Unknown loan." }, 404);
-      }
+      const response = writeBackErrorResponse(error);
+      if (response) return response;
       throw error;
     }
   }),
@@ -205,9 +220,8 @@ http.route({
 
       return json({ ok: true, duplicate: result.duplicate });
     } catch (error) {
-      if (error instanceof ConvexError && error.data === "Unknown loan.") {
-        return json({ error: "Unknown loan." }, 404);
-      }
+      const response = writeBackErrorResponse(error);
+      if (response) return response;
       throw error;
     }
   }),
