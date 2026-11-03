@@ -107,12 +107,11 @@ export default defineSchema({
     actorId: v.id("users"),
     action: v.union(
       v.literal("tool.archived"),
-      v.literal("loan.reviewed"),
       v.literal("user.trusted_lender_granted"),
       v.literal("user.trusted_lender_revoked"),
       v.literal("user.role_changed"),
     ),
-    targetType: v.union(v.literal("tool"), v.literal("loan"), v.literal("user")),
+    targetType: v.union(v.literal("tool"), v.literal("user")),
     targetId: v.string(),
     summary: v.string(),
     createdAt: v.number(),

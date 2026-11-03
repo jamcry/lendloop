@@ -60,17 +60,21 @@ the Admin tab appears.
 
 Everything is optional except the first three.
 
-| Variable                            | Where          | Purpose                                               |
-| ----------------------------------- | -------------- | ----------------------------------------------------- |
-| `NEXT_PUBLIC_CONVEX_URL`            | Next.js        | Written by `npx convex dev`                           |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Next.js        | Clerk browser SDK                                     |
-| `CLERK_SECRET_KEY`                  | Next.js server | Clerk server SDK. Never imported into client code     |
-| `CLERK_JWT_ISSUER_DOMAIN`           | **Convex** env | JWT issuer Convex validates against                   |
-| `ADMIN_EMAILS`                      | **Convex** env | Comma-separated; promoted to `admin` on first sign-in |
-| `SEED_ENABLED`                      | **Convex** env | Must be `true` for `seed:populate` to run             |
+| Variable                            | Where                | Purpose                                                                                       |
+| ----------------------------------- | -------------------- | --------------------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_CONVEX_URL`            | Next.js              | Written by `npx convex dev`                                                                   |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Next.js              | Clerk browser SDK                                                                             |
+| `CLERK_SECRET_KEY`                  | Next.js server       | Clerk server SDK. Never imported into client code                                             |
+| `CLERK_JWT_ISSUER_DOMAIN`           | **Convex** env       | JWT issuer Convex validates against                                                           |
+| `ADMIN_EMAILS`                      | **Convex** env       | Comma-separated; these addresses are made `admin` on sync                                     |
+| `SEED_ENABLED`                      | **Convex** env       | Must be `true` for `seed:populate` to run                                                     |
+| `LENDLOOP_SHARED_SECRET`            | **Convex** env + n8n | HMAC key, both directions. Must be identical on both sides                                    |
+| `N8N_WEBHOOK_URL`                   | **Convex** env       | n8n webhook. Convex is cloud-hosted, so local n8n needs a public tunnel (see `n8n/README.md`) |
 
 Convex deployment variables are set with `npx convex env set`, not in `.env.local`
-— they live on the deployment and are never bundled into the frontend.
+— they live on the deployment and are never bundled into the frontend. Putting
+the last two in `.env.local` does nothing; the deployment will keep reporting
+"n8n is not configured".
 
 ---
 
@@ -247,7 +251,7 @@ Automation tab — nothing fails silently.
 - Secrets live in Convex deployment env and `n8n/.env`; the exported JSON contains
   only `{{ $env.LENDLOOP_SHARED_SECRET }}` references.
 
-Both HTTP endpoints fail closed with `503` if the secret is unset.
+All three HTTP endpoints fail closed with `503` if the secret is unset.
 
 ### Idempotent write-backs
 

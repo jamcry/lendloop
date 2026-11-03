@@ -353,9 +353,10 @@ function RemoveButton({
   onRemove: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
 
   return (
-    <AlertDialog>
+    <AlertDialog open={open} onOpenChange={(next) => !busy && setOpen(next)}>
       <AlertDialogTrigger asChild>
         <Button variant="ghost" size="sm" disabled={disabled}>
           <Archive className="size-3.5" />
@@ -375,10 +376,13 @@ function RemoveButton({
           <AlertDialogAction
             disabled={busy}
             onClick={async (event) => {
+              // Keep the dialog open while the mutation runs, then close
+              // explicitly. Without this it stays open over a stale list.
               event.preventDefault();
               setBusy(true);
               try {
                 await onRemove();
+                setOpen(false);
               } finally {
                 setBusy(false);
               }

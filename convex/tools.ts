@@ -19,7 +19,6 @@ function toToolFields(
     category: tool.category,
     condition: tool.condition,
     description: tool.description,
-    ownerId: tool.ownerId,
     isMine: tool.ownerId === viewerId,
     availability: activeLoan
       ? { state: "lent" as const, until: activeLoan.endDate }

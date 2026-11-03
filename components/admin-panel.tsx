@@ -12,6 +12,17 @@ import { StatusPill } from "@/components/status-pill";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -155,21 +166,38 @@ function ListingsTable() {
                 {tool.archivedAt ? (
                   <span className="text-muted-foreground/60 text-xs">—</span>
                 ) : (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={async () => {
-                      try {
-                        await archiveTool({ toolId: tool.id });
-                        toast.success("Listing removed.");
-                      } catch (error) {
-                        toast.error(errorMessage(error));
-                      }
-                    }}
-                  >
-                    <Archive className="size-3.5" />
-                    Remove
-                  </Button>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button variant="ghost" size="sm">
+                        <Archive className="size-3.5" />
+                        Remove
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Remove “{tool.name}”?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          This is recorded in the audit log and cannot be undone from the
+                          app. Existing loan history is kept.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={async () => {
+                            try {
+                              await archiveTool({ toolId: tool.id });
+                              toast.success("Listing removed.");
+                            } catch (error) {
+                              toast.error(errorMessage(error));
+                            }
+                          }}
+                        >
+                          Remove listing
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                 )}
               </TableCell>
             </TableRow>

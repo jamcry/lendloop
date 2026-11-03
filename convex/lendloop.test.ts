@@ -138,7 +138,7 @@ describe("users", () => {
     // must fail validation rather than being silently ignored.
     await expect(
       asAlice.mutation(api.users.sync, { role: "admin" } as never),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/validator/i);
 
     const me = await asAlice.query(api.users.me, {});
     expect(me?.role).toBe("user");

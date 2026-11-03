@@ -25,9 +25,12 @@ import { todayUtc } from "./lib/validation";
  * Inbound: `convex/http.ts` exposes signed endpoints. See `docs/n8n-design.md`.
  */
 
-/** Backoff ladder. Length is also the attempt limit. */
+/**
+ * Backoff ladder: one delay per retry, after the initial attempt.
+ * Attempt 1 fails → wait 30s → attempt 2 → ... → attempt 6 fails for good.
+ */
 const BACKOFF_MS = [30_000, 120_000, 600_000, 3_600_000, 14_400_000];
-const MAX_ATTEMPTS = BACKOFF_MS.length;
+const MAX_ATTEMPTS = BACKOFF_MS.length + 1;
 const REQUEST_TIMEOUT_MS = 10_000;
 
 function describeError(error: unknown): string {
@@ -172,7 +175,7 @@ export const scheduleRetry = internalMutation({
       return;
     }
 
-    const delay = BACKOFF_MS[attempts - 1] ?? BACKOFF_MS[BACKOFF_MS.length - 1];
+    const delay = BACKOFF_MS[attempts - 1];
     await ctx.db.patch(jobId, {
       status: "pending",
       attempts,
@@ -196,6 +199,13 @@ export const failJob = internalMutation({
       lastError: error,
       updatedAt: now,
     });
+
+    const alreadyRecorded = await ctx.db
+      .query("loanActivity")
+      .withIndex("by_dedupe", (q) => q.eq("dedupeKey", `job:${jobId}:failed`))
+      .unique();
+    if (alreadyRecorded) return;
+
     await ctx.db.insert("loanActivity", {
       loanId: job.loanId,
       kind: "notification.failed",

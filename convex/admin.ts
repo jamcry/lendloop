@@ -21,11 +21,10 @@ async function recordAudit(
     actorId: Id<"users">;
     action:
       | "tool.archived"
-      | "loan.reviewed"
       | "user.trusted_lender_granted"
       | "user.trusted_lender_revoked"
       | "user.role_changed";
-    targetType: "tool" | "loan" | "user";
+    targetType: "tool" | "user";
     targetId: string;
     summary: string;
   },

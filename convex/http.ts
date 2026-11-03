@@ -1,4 +1,5 @@
 import { httpRouter } from "convex/server";
+import { ConvexError } from "convex/values";
 
 import { internal } from "./_generated/api";
 import { httpAction } from "./_generated/server";
@@ -155,10 +156,13 @@ http.route({
       }
 
       return json({ ok: true, duplicate: result.duplicate });
-    } catch {
-      // Covers an unknown or malformed loan id. The signature already proved the
-      // caller is n8n, so this is data quality, not an auth failure.
-      return json({ error: "Unknown loan." }, 404);
+    } catch (error) {
+      // Only an unknown loan is a 404. Anything else (a write conflict, a
+      // deployment problem) is a 500, so n8n retries instead of dropping it.
+      if (error instanceof ConvexError && error.data === "Unknown loan.") {
+        return json({ error: "Unknown loan." }, 404);
+      }
+      throw error;
     }
   }),
 });
@@ -200,9 +204,11 @@ http.route({
       });
 
       return json({ ok: true, duplicate: result.duplicate });
-    } catch {
-      // A loan id that does not exist is a caller error, not a server fault.
-      return json({ error: "Unknown loan." }, 404);
+    } catch (error) {
+      if (error instanceof ConvexError && error.data === "Unknown loan.") {
+        return json({ error: "Unknown loan." }, 404);
+      }
+      throw error;
     }
   }),
 });

@@ -272,7 +272,9 @@ export const get = query({
   handler: async (ctx, { id }) => {
     const viewer: Viewer = await requireViewer(ctx);
     const loan = await ctx.db.get(id);
-    if (!loan) notFound("Loan");
+    // No distinct "not found" error: otherwise the difference between a missing
+    // loan and someone else's loan tells a caller which ids exist.
+    if (!loan) return null;
 
     assertLoanParticipant(viewer, loan);
     return await describeLoan(ctx, loan);

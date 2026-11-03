@@ -109,7 +109,7 @@ Three HTTP endpoints on Convex's `httpRouter`:
 | `/automation/overdue`   | GET    | Scheduled workflow polls overdue loans         |
 | `/automation/reminders` | POST   | Workflow records that a reminder was delivered |
 
-`GET /overdue` is already implemented as the internal query
+`GET /overdue` wraps the internal query
 `automation.overdueLoans`. It returns six fields — `loanId`, `toolName`,
 `borrowerName`, `borrowerEmail`, `dueDate`, `daysOverdue` — because that is what a
 reminder needs and nothing more.

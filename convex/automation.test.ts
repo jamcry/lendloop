@@ -265,17 +265,31 @@ describe("automation outbox", () => {
     );
     if (!job) throw new Error("no job");
 
-    // Five attempts is the ladder length; the fifth marks the job failed.
-    for (let attempt = 0; attempt < 5; attempt += 1) {
+    // Five delays, plus the initial attempt: the sixth failure is terminal.
+    const expectedDelays = [30_000, 120_000, 600_000, 3_600_000, 14_400_000];
+
+    for (const [index, delay] of expectedDelays.entries()) {
+      const before = Date.now();
       await t.mutation(internal.automation.scheduleRetry, {
         jobId: job._id,
         error: "n8n responded 500",
       });
+
+      const retried = await t.run(async (ctx) => ctx.db.get(job._id));
+      expect(retried?.status).toBe("pending");
+      // Each step must wait its own delay, not a flat interval.
+      expect(retried!.nextAttemptAt - before).toBeGreaterThanOrEqual(delay);
+      expect(retried?.attempts).toBe(index + 1);
     }
+
+    await t.mutation(internal.automation.scheduleRetry, {
+      jobId: job._id,
+      error: "n8n responded 500",
+    });
 
     const after = await t.run(async (ctx) => ctx.db.get(job._id));
     expect(after?.status).toBe("failed");
-    expect(after?.attempts).toBe(5);
+    expect(after?.attempts).toBe(expectedDelays.length + 1);
 
     const activity = await t.run(async (ctx) =>
       ctx.db
@@ -285,7 +299,7 @@ describe("automation outbox", () => {
     );
     const failures = activity.filter((row) => row.kind === "notification.failed");
     expect(failures).toHaveLength(1);
-    expect(failures[0].detail).toMatch(/5 attempts/);
+    expect(failures[0].detail).toMatch(/6 attempts/);
   });
 });
 

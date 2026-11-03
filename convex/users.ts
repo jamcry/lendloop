@@ -56,10 +56,10 @@ export const sync = mutation({
         existing.email !== email ||
         existing.imageUrl !== imageUrl;
 
-      // ADMIN_EMAILS is authoritative for bootstrap admins, so adding an address
-      // to the deployment env promotes an existing account on the next sync.
-      // Demotion stays manual (admin panel), and only applies while the address
-      // is no longer listed here.
+      // ADMIN_EMAILS is authoritative for bootstrap admins: adding an address to
+      // the deployment env promotes an existing account on the next sync. It only
+      // ever promotes — a demoted bootstrap admin is re-promoted here, so the two
+      // steps (remove from env, then demote) are both required.
       const needsPromotion = isBootstrapAdmin(email) && existing.role !== "admin";
 
       if (profileDrift || needsPromotion) {
