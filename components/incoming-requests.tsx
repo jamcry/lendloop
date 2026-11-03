@@ -54,7 +54,7 @@ export function IncomingRequests() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter requests">
         {TABS.map((item) => (
           <button
             key={item.key}

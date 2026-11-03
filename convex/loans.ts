@@ -11,7 +11,13 @@ import {
 } from "./lib/authz";
 import { enqueueLoanEvent } from "./automation";
 import { assertRangeIsFree, isOverdue } from "./lib/loans";
-import { assertLoanRange, cleanText, MAX_MESSAGE_LENGTH } from "./lib/validation";
+import {
+  assertLoanRange,
+  cleanText,
+  MAX_MESSAGE_LENGTH,
+  startOfUtcDay,
+  todayUtc,
+} from "./lib/validation";
 
 /**
  * Loan lifecycle:
@@ -66,7 +72,15 @@ export const request = mutation({
     if (tool.ownerId === viewer._id) forbidden("You cannot borrow your own tool.");
 
     assertLoanRange(args.startDate, args.endDate);
-    await assertRangeIsFree(ctx, tool._id, args.startDate, args.endDate);
+
+    // Normalize before storing. Validation compares UTC day boundaries, so if the
+    // raw timestamp were persisted, a caller hitting the mutation directly could
+    // store a mid-day range that `rangesOverlap` misjudges as non-overlapping and
+    // that `lentToolsByToolId` never counts as lent.
+    const startDate = startOfUtcDay(args.startDate);
+    const endDate = startOfUtcDay(args.endDate);
+
+    await assertRangeIsFree(ctx, tool._id, startDate, endDate);
 
     const existingPending = await ctx.db
       .query("loans")
@@ -78,8 +92,8 @@ export const request = mutation({
     const duplicate = existingPending.find(
       (loan) =>
         loan.toolId === tool._id &&
-        loan.startDate === args.startDate &&
-        loan.endDate === args.endDate,
+        loan.startDate === startDate &&
+        loan.endDate === endDate,
     );
     if (duplicate) {
       throw new ConvexError("You already have a pending request for those dates.");
@@ -90,8 +104,8 @@ export const request = mutation({
       toolId: tool._id,
       ownerId: tool.ownerId,
       borrowerId: viewer._id,
-      startDate: args.startDate,
-      endDate: args.endDate,
+      startDate,
+      endDate,
       status: "pending",
       message: args.message
         ? cleanText(args.message, {
@@ -113,8 +127,8 @@ export const request = mutation({
         borrowerId: viewer._id,
         ownerId: tool.ownerId,
         status: "pending",
-        startDate: args.startDate,
-        endDate: args.endDate,
+        startDate,
+        endDate,
       },
       "loan.requested",
     );
@@ -143,16 +157,23 @@ export const decide = mutation({
       throw new ConvexError(`This request was already ${loan.status}.`);
     }
 
-    // A listing can be removed while a request is still pending. Approving it
-    // would reserve a tool the board no longer shows.
-    const tool = await ctx.db.get(loan.toolId);
-    if (tool?.archivedAt !== undefined) {
-      throw new ConvexError(
-        "This listing was removed, so the request cannot be approved.",
-      );
-    }
-
     if (decision === "approved") {
+      // A listing can be removed while a request is still pending. Approving it
+      // would reserve a tool the board no longer shows. Declining must stay
+      // possible, otherwise the request is stuck forever.
+      const tool = await ctx.db.get(loan.toolId);
+      if (tool?.archivedAt !== undefined) {
+        throw new ConvexError(
+          "This listing was removed, so the request cannot be approved.",
+        );
+      }
+
+      // Approving a window that has already passed would create a loan that is
+      // overdue the moment it starts.
+      if (loan.endDate < todayUtc()) {
+        throw new ConvexError("That borrowing window has already passed.");
+      }
+
       // Re-check at approval time: another request may have been approved while
       // this one sat in the queue.
       await assertRangeIsFree(ctx, loan.toolId, loan.startDate, loan.endDate);

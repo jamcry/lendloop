@@ -361,16 +361,91 @@ function ActivityFeed() {
  */
 function AutomationFeed() {
   const rows = useQuery(api.automation.recentActivity);
+  const failed = useQuery(api.automation.failedJobs);
+
   if (rows === undefined) return <Skeleton className="h-32 w-full rounded-xl" />;
 
-  if (rows.length === 0) {
-    return (
-      <div className="text-muted-foreground rounded-xl border border-dashed py-16 text-center text-sm">
-        No automation activity yet. Notifications appear here once n8n calls back.
-      </div>
-    );
-  }
+  return (
+    <div className="space-y-6">
+      <FailedJobs jobs={failed} />
 
+      {rows.length === 0 ? (
+        <div className="text-muted-foreground rounded-xl border border-dashed py-16 text-center text-sm">
+          No automation activity yet. Notifications appear here once n8n calls back.
+        </div>
+      ) : (
+        <ActivityTable rows={rows} />
+      )}
+    </div>
+  );
+}
+
+/** Jobs that exhausted their retries. The activity rows say what failed; this
+ *  says which job and why it stopped, which is what you need to replay it. */
+function FailedJobs({
+  jobs,
+}: {
+  jobs:
+    | Array<{
+        id: string;
+        kind: string;
+        attempts: number;
+        lastError: string | null;
+        updatedAt: number;
+        eventId: string;
+      }>
+    | undefined;
+}) {
+  if (jobs === undefined || jobs.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      <h3 className="text-muted-foreground font-mono text-[11px] tracking-wider uppercase">
+        Failed deliveries
+      </h3>
+      <div className="overflow-hidden rounded-xl border border-red-200 dark:border-red-900">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Event</TableHead>
+              <TableHead>Attempts</TableHead>
+              <TableHead>Error</TableHead>
+              <TableHead>When</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {jobs.map((job) => (
+              <TableRow key={job.id}>
+                <TableCell className="font-mono text-xs">{job.kind}</TableCell>
+                <TableCell className="text-muted-foreground text-xs">
+                  {job.attempts}
+                </TableCell>
+                <TableCell className="text-muted-foreground max-w-md truncate text-sm">
+                  {job.lastError}
+                </TableCell>
+                <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
+                  {relativeTime(job.updatedAt)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  );
+}
+
+function ActivityTable({
+  rows,
+}: {
+  rows: Array<{
+    _id: string;
+    kind: string;
+    detail: string;
+    channel: string;
+    createdAt: number;
+  }>;
+}) {
   return (
     <div className="overflow-hidden rounded-xl border">
       <Table>

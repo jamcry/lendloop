@@ -34,7 +34,11 @@ export function BrowseBoard() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex flex-wrap gap-1.5">
+        <div
+          className="flex flex-wrap gap-1.5"
+          role="group"
+          aria-label="Filter by category"
+        >
           <FilterChip active={category === null} onClick={() => setCategory(null)}>
             All
           </FilterChip>

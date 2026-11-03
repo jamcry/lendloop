@@ -25,6 +25,9 @@ const http = httpRouter();
 
 const JSON_HEADERS = { "content-type": "application/json" };
 
+/** Nothing n8n sends is large; refuse anything bigger before parsing it. */
+const MAX_BODY_BYTES = 32 * 1024;
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
 }
@@ -63,9 +66,17 @@ function requireIdempotencyKey(
   request: Request,
 ): { key: string } | { response: Response } {
   const key = request.headers.get(IDEMPOTENCY_HEADER)?.trim();
-  if (!key || key.length > 200) {
+  if (!key) {
     return {
       response: json({ error: `An ${IDEMPOTENCY_HEADER} header is required.` }, 400),
+    };
+  }
+  if (key.length > 200) {
+    return {
+      response: json(
+        { error: `${IDEMPOTENCY_HEADER} must be 200 characters or fewer.` },
+        400,
+      ),
     };
   }
   return { key };
@@ -101,6 +112,9 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     const body = await request.text();
+    if (body.length > MAX_BODY_BYTES) {
+      return json({ error: "Body too large." }, 413);
+    }
 
     const verification = await verifySignature(request, body);
     if (!verification.ok) return verification.response;
@@ -160,6 +174,9 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     const body = await request.text();
+    if (body.length > MAX_BODY_BYTES) {
+      return json({ error: "Body too large." }, 413);
+    }
 
     const verification = await verifySignature(request, body);
     if (!verification.ok) return verification.response;
@@ -174,14 +191,19 @@ http.route({
       return json({ error: "Body must be JSON." }, 400);
     }
 
-    const result = await ctx.runMutation(internal.automation.recordWorkflowFailure, {
-      idempotencyKey: key.key,
-      workflow: typeof parsed.workflow === "string" ? parsed.workflow : "unknown",
-      detail: typeof parsed.detail === "string" ? parsed.detail : "Workflow failed",
-      loanId: typeof parsed.loanId === "string" ? (parsed.loanId as never) : undefined,
-    });
+    try {
+      const result = await ctx.runMutation(internal.automation.recordWorkflowFailure, {
+        idempotencyKey: key.key,
+        workflow: typeof parsed.workflow === "string" ? parsed.workflow : "unknown",
+        detail: typeof parsed.detail === "string" ? parsed.detail : "Workflow failed",
+        loanId: typeof parsed.loanId === "string" ? (parsed.loanId as never) : undefined,
+      });
 
-    return json({ ok: true, duplicate: result.duplicate });
+      return json({ ok: true, duplicate: result.duplicate });
+    } catch {
+      // A loan id that does not exist is a caller error, not a server fault.
+      return json({ error: "Unknown loan." }, 404);
+    }
   }),
 });
 

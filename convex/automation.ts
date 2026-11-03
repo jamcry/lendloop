@@ -249,14 +249,17 @@ export const deliver = internalAction({
       if (!response.ok) {
         throw new Error(`n8n responded ${response.status}`);
       }
-
-      await ctx.runMutation(internal.automation.markSent, { jobId });
     } catch (error) {
       await ctx.runMutation(internal.automation.scheduleRetry, {
         jobId,
         error: describeError(error),
       });
+      return;
     }
+
+    // Outside the try: if the POST succeeded but this bookkeeping call failed, we
+    // must not treat the run as a delivery failure and send the notification again.
+    await ctx.runMutation(internal.automation.markSent, { jobId });
   },
 });
 
@@ -318,6 +321,12 @@ export const recordWorkflowFailure = internalMutation({
       .unique();
     if (existing) return { duplicate: true };
 
+    // A dangling loan id would leave a row pointing at nothing; report it as a
+    // caller error rather than storing it.
+    if (loanId && !(await ctx.db.get(loanId))) {
+      throw new ConvexError("Unknown loan.");
+    }
+
     await ctx.db.insert("loanActivity", {
       loanId,
       kind: "workflow.failed",
@@ -362,6 +371,33 @@ export const overdueLoans = internalQuery({
         };
       }),
     );
+  },
+});
+
+/**
+ * Jobs that exhausted their retry ladder. Without this, a failed notification is
+ * only visible through the activity rows; this shows the job itself, with the
+ * error that stopped it.
+ */
+export const failedJobs = query({
+  args: {},
+  handler: async (ctx) => {
+    const viewer = await requireViewer(ctx);
+    if (viewer.role !== "admin") return [];
+
+    const jobs = await ctx.db
+      .query("automationJobs")
+      .withIndex("by_status_next", (q) => q.eq("status", "failed"))
+      .take(20);
+
+    return jobs.map((job) => ({
+      id: job._id,
+      kind: job.kind,
+      attempts: job.attempts,
+      lastError: job.lastError ?? null,
+      updatedAt: job.updatedAt,
+      eventId: job.eventKey,
+    }));
   },
 });
 

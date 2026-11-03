@@ -56,10 +56,7 @@ export default defineSchema({
     role: userRoleValidator,
     trustedLender: v.boolean(),
     createdAt: v.number(),
-  })
-    .index("by_clerk_id", ["clerkId"])
-    .index("by_email", ["email"])
-    .index("by_role", ["role"]),
+  }).index("by_clerk_id", ["clerkId"]),
 
   /**
    * A tool someone is willing to lend. Soft-deleted via `archivedAt` so loan
@@ -119,9 +116,7 @@ export default defineSchema({
     targetId: v.string(),
     summary: v.string(),
     createdAt: v.number(),
-  })
-    .index("by_created", ["createdAt"])
-    .index("by_target", ["targetType", "targetId"]),
+  }).index("by_created", ["createdAt"]),
 
   /**
    * Transactional outbox for the n8n integration.
@@ -144,7 +139,6 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_status_next", ["status", "nextAttemptAt"])
-    .index("by_event_key", ["eventKey"])
     .index("by_loan", ["loanId"]),
 
   /**

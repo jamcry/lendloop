@@ -500,3 +500,68 @@ describe("public availability", () => {
     expect(await t.query(api.tools.listPublic, {})).toHaveLength(1);
   });
 });
+
+describe("date normalization", () => {
+  it("stores the UTC day, not the exact timestamp the caller sent", async () => {
+    const t = setup();
+    const toolId = await createTool(t, alice);
+    const asBob = await signIn(t, bob);
+
+    // A caller hitting the mutation directly can send any millisecond value.
+    const midDay = todayUtc() + 23 * 60 * 60 * 1000;
+    const loanId = await asBob.mutation(api.loans.request, {
+      toolId,
+      startDate: midDay,
+      endDate: midDay,
+    });
+
+    const stored = await t.run(async (ctx) => ctx.db.get(loanId as Id<"loans">));
+    expect(stored?.startDate).toBe(todayUtc());
+    expect(stored?.endDate).toBe(todayUtc());
+  });
+
+  it("keeps the overlap invariant for an unaligned range", async () => {
+    const t = setup();
+    const toolId = await createTool(t, alice);
+    const asAlice = t.withIdentity(alice);
+    const asBob = await signIn(t, bob);
+    const asCam = await signIn(t, cam);
+
+    const midDay = todayUtc() + 23 * 60 * 60 * 1000;
+    const unaligned = await asBob.mutation(api.loans.request, {
+      toolId,
+      startDate: midDay,
+      endDate: midDay,
+    });
+    await asAlice.mutation(api.loans.decide, {
+      loanId: unaligned,
+      decision: "approved",
+    });
+
+    // Same calendar day, but expressed as midnight. Without normalization this
+    // would be judged non-overlapping and both requests could be approved.
+    await expect(
+      asCam.mutation(api.loans.request, {
+        toolId,
+        startDate: todayUtc(),
+        endDate: todayUtc(),
+      }),
+    ).rejects.toThrow(/overlap/i);
+  });
+});
+
+describe("archived listings with pending requests", () => {
+  it("still allows declining, so the request is not stuck forever", async () => {
+    const t = setup();
+    const toolId = await createTool(t, alice);
+    const asAlice = t.withIdentity(alice);
+    const asBob = await signIn(t, bob);
+
+    const loanId = await asBob.mutation(api.loans.request, { toolId, ...range(1, 2) });
+    await asAlice.mutation(api.tools.archive, { id: toolId });
+
+    await asAlice.mutation(api.loans.decide, { loanId, decision: "declined" });
+    const loan = await asAlice.query(api.loans.get, { id: loanId });
+    expect(loan?.status).toBe("declined");
+  });
+});

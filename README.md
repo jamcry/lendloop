@@ -122,7 +122,10 @@ auditEvents    actorId, action, targetType, targetId, summary, createdAt
 **Indexes that correspond to real queries:** `users.by_clerk_id` (every request
 resolves an identity), `loans.by_tool` (overlap checks), `loans.by_owner` and
 `loans.by_borrower` (the two inbox views), `loans.by_status_end` (the overdue
-query), `tools.by_owner`, `tools.by_category`.
+query), `automationJobs.by_status_next` (failed-delivery view),
+`loanActivity.by_dedupe` (idempotency lookups), `tools.by_owner`,
+`tools.by_category`. Indexes with no reader were removed rather than kept for
+appearance.
 
 Three decisions worth defending:
 
@@ -179,10 +182,12 @@ Four things this does deliberately:
 - **Admins cannot change their own role**, which prevents accidental lockout.
 - **Bootstrap admins come from `ADMIN_EMAILS`**, applied on every sync, so nobody
   has to poke the database to get started and adding a second admin later is a
-  one-line env change. Demotion is a deliberate admin-panel action.
+  one-line env change. Note the consequence: an address listed there is re-promoted
+  after any demotion, so removing someone from `ADMIN_EMAILS` _is_ the demotion
+  path. Admins who are not in the env var are managed normally from the panel.
 
 These are not just asserted — `convex/lendloop.test.ts` runs the negative cases as
-multiple mocked users (26 tests). A non-admin calling `admin.allUsers` fails. A
+multiple mocked users (30 tests). A non-admin calling `admin.allUsers` fails. A
 borrower approving their own request fails. An unrelated user reading a loan
 fails.
 
@@ -281,7 +286,7 @@ Against the real deployment and a real n8n container (v2.46.4):
 | Forged signature at n8n webhook     | `401`                                |
 | Daily workflow run twice            | **one** reminder row                 |
 
-46 automated tests cover the signature scheme (including a known-answer vector
+49 automated tests cover the signature scheme (including a known-answer vector
 computed independently in Python), the outbox, the retry ladder, idempotency, and
 the overdue query.
 
@@ -333,7 +338,7 @@ not a bug.
 ## Testing
 
 ```bash
-npm test        # 46 tests, convex-test, no deployment or keys needed
+npm test        # 49 tests, convex-test, no deployment or keys needed
 npm run typecheck
 npm run lint
 npm run build
@@ -360,7 +365,7 @@ app/
     page.tsx              # public landing + read-only board
     browse/ tools/[id]/   # authenticated board, details, request form
     my-listings/ my-requests/ incoming/
-    admin/                # tabs: overview, listings, loans, users, activity
+    admin/                # tabs: overview, listings, loans, users, activity, automation
     sign-in/ sign-up/
   layout.tsx              # fonts + providers
 components/
@@ -375,7 +380,7 @@ convex/
   http.ts                 # signed inbound endpoints (overdue, reminders, failures)
   automation.ts           # outbox, delivery with retries, idempotent write-back
   lib/signing.ts          # HMAC + canonical JSON
-  lendloop.test.ts        # 27 tests
+  lendloop.test.ts        # 30 tests
   automation.test.ts      # 19 tests
   seed.ts
 docs/n8n-design.md

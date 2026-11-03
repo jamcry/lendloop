@@ -110,7 +110,20 @@ export function ToolDetail({ toolId }: { toolId: Id<"tools"> }) {
         </Card>
 
         <div className="space-y-4">
-          {tool.isMine ? (
+          {tool.archivedAt ? (
+            <Card className="py-0">
+              <CardContent className="space-y-2 p-6">
+                <h2 className="text-sm font-medium">This listing was removed</h2>
+                <p className="text-muted-foreground text-sm">
+                  It is no longer available to borrow. If you already have a request on
+                  it, the lender can still decline it.
+                </p>
+                <Button asChild size="sm" variant="outline">
+                  <Link href="/browse">Browse other tools</Link>
+                </Button>
+              </CardContent>
+            </Card>
+          ) : tool.isMine ? (
             <Card className="py-0">
               <CardContent className="space-y-3 p-6">
                 <h2 className="text-sm font-medium">This is your tool</h2>

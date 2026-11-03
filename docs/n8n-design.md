@@ -1,4 +1,4 @@
-# n8n integration — design (not implemented)
+# n8n integration — design notes
 
 **Status: implemented.** This document records the design and the reasoning
 behind it. The as-built summary, setup steps, and verification results live in
@@ -33,7 +33,7 @@ between them cannot lose a notification, and a retried mutation cannot create a
 second one because the job row is keyed to the loan event.
 
 ```ts
-await ctx.scheduler.runAfter(0, internal.automation.dispatchJob, { jobId });
+await ctx.scheduler.runAfter(0, internal.automation.deliver, { jobId });
 ```
 
 Backoff: 30s → 2m → 10m → 1h → 4h, then `failed`. `failed` is visible in the app
@@ -42,30 +42,35 @@ default outcome of most webhook code and it is the thing I would be judged on.
 
 ## 2. Outbound payloads
 
-Only what the notification needs. No emails of the other party, no tool
-description, no full user records.
+Only what the notification needs: one recipient, and nothing about the other
+party's contact details. No tool description, no full user records.
 
-`request.created` / `request.status_changed`:
+`loan.requested` / `loan.status_changed`:
 
 ```json
 {
-  "eventId": "evt_01J...",
+  "eventId": "loan.status_changed:k17f...:approved:1767225600000",
   "kind": "loan.status_changed",
   "occurredAt": 1767225600000,
   "data": {
     "loanId": "k17f...",
     "toolName": "DeWalt cordless drill",
+    "toolCategory": "power-tools",
     "status": "approved",
     "startDate": 1767225600000,
     "endDate": 1767484800000,
-    "borrowerEmail": "borrower@example.com",
-    "ownerEmail": "owner@example.com"
+    "audience": "borrower",
+    "recipientName": "Bob",
+    "recipientEmail": "bob@example.com",
+    "counterpartyName": "Alice"
   }
 }
 ```
 
-The workflow decides who to message from `status`, so the app never has to
-explain notification policy to itself.
+The app decides the audience, not the workflow: a new request or a cancellation
+addresses the lender, a decision addresses the borrower. `audience` is carried
+explicitly so the workflow has no notification policy to get wrong, and the
+non-recipient's email never leaves the database.
 
 ## 3. Signing (app → n8n)
 
@@ -97,7 +102,7 @@ string from the same data. The first live test against n8n returned
 
 ## 4. Inbound (n8n → app)
 
-Two HTTP endpoints on Convex's `httpRouter`:
+Three HTTP endpoints on Convex's `httpRouter`:
 
 | Endpoint                | Method | Purpose                                        |
 | ----------------------- | ------ | ---------------------------------------------- |
@@ -105,9 +110,9 @@ Two HTTP endpoints on Convex's `httpRouter`:
 | `/automation/reminders` | POST   | Workflow records that a reminder was delivered |
 
 `GET /overdue` is already implemented as the internal query
-`automation.overdueLoans`; only the HTTP wrapper is missing. It returns
-`loanId`, `toolName`, `borrowerEmail`, `dueDate`, `daysOverdue` — five fields,
-because a reminder needs five fields.
+`automation.overdueLoans`. It returns six fields — `loanId`, `toolName`,
+`borrowerName`, `borrowerEmail`, `dueDate`, `daysOverdue` — because that is what a
+reminder needs and nothing more.
 
 ### Write-back idempotency
 
@@ -188,8 +193,8 @@ like any other, or n8n logs "cannot be executed"; and `errorWorkflow` holds a
 workflow **ID**, which is instance-specific. The exported JSON contains the ID
 from the machine it was exported on — on a fresh instance, re-select it in the
 workflow settings after import. If the app is unreachable too, the workflow writes to a
-dead-letter webhook (Slack) — but the last resort is n8n's own execution history,
-which is why the error workflow is a notification, not the only record.
+n8n's own execution history — which is why the error workflow is a notification,
+not the only record.
 
 ## 6. Why the app never trusts n8n
 

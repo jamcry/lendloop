@@ -3,6 +3,7 @@
 import { useMutation, useQuery } from "convex/react";
 import { Inbox } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
 import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
@@ -24,6 +25,7 @@ import { errorMessage } from "@/lib/errors";
 export function MyRequests() {
   const requests = useQuery(api.loans.myRequests);
   const cancel = useMutation(api.loans.cancel);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   if (requests === undefined) {
     return (
@@ -87,16 +89,20 @@ export function MyRequests() {
                   <Button
                     variant="ghost"
                     size="sm"
+                    disabled={busyId === request.id}
                     onClick={async () => {
+                      setBusyId(request.id);
                       try {
                         await cancel({ loanId: request.id as Id<"loans"> });
                         toast.success("Request withdrawn.");
                       } catch (error) {
                         toast.error(errorMessage(error));
+                      } finally {
+                        setBusyId(null);
                       }
                     }}
                   >
-                    Withdraw
+                    {busyId === request.id ? "Withdrawing…" : "Withdraw"}
                   </Button>
                 ) : (
                   <span className="text-muted-foreground/60 text-xs">—</span>

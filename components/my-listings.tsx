@@ -12,6 +12,17 @@ import { AvailabilityPill } from "@/components/status-pill";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -62,11 +73,14 @@ export function MyListings() {
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
         <p className="text-muted-foreground text-sm">
-          {listings === undefined
-            ? "Loading your listings…"
-            : `${listings.filter((item) => !item.archivedAt).length} active listing${
-                listings.length === 1 ? "" : "s"
-              }`}
+          {listings === undefined ? (
+            "Loading your listings…"
+          ) : (
+            <ActiveCount
+              active={listings.filter((item) => !item.archivedAt).length}
+              total={listings.length}
+            />
+          )}
         </p>
         <Button size="sm" onClick={() => setCreating(true)}>
           <Plus className="size-4" />
@@ -128,11 +142,9 @@ export function MyListings() {
                     <Pencil className="size-3.5" />
                     Edit
                   </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
+                  <RemoveButton
                     disabled={Boolean(listing.archivedAt)}
-                    onClick={async () => {
+                    onRemove={async () => {
                       try {
                         await archive({ id: listing.id });
                         toast.success("Listing removed.");
@@ -140,10 +152,7 @@ export function MyListings() {
                         toast.error(errorMessage(error));
                       }
                     }}
-                  >
-                    <Archive className="size-3.5" />
-                    Remove
-                  </Button>
+                  />
                 </div>
               </CardContent>
             </Card>
@@ -319,5 +328,66 @@ function ListingForm({
         </Button>
       </DialogFooter>
     </form>
+  );
+}
+
+function ActiveCount({ active, total }: { active: number; total: number }) {
+  if (total === 0) return <>No listings yet</>;
+  return (
+    <>
+      {active} active {active === 1 ? "listing" : "listings"}
+      {total > active ? ` · ${total - active} removed` : null}
+    </>
+  );
+}
+
+/**
+ * Removing a listing is permanent (the row is kept for loan history but cannot be
+ * restored from the UI), so it asks first.
+ */
+function RemoveButton({
+  disabled,
+  onRemove,
+}: {
+  disabled: boolean;
+  onRemove: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button variant="ghost" size="sm" disabled={disabled}>
+          <Archive className="size-3.5" />
+          Remove
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Remove this listing?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Neighbors will no longer see it and it cannot be restored from here. Existing
+            loan history is kept.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Keep it</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={busy}
+            onClick={async (event) => {
+              event.preventDefault();
+              setBusy(true);
+              try {
+                await onRemove();
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {busy ? "Removing…" : "Remove listing"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

@@ -44,6 +44,7 @@ export function SiteHeader() {
               <Link
                 key={link.href}
                 href={link.href}
+                aria-current={pathname === link.href ? "page" : undefined}
                 className={cn(
                   "rounded-md px-3 py-2 text-sm transition-colors",
                   pathname === link.href
@@ -89,8 +90,9 @@ export function SiteHeader() {
               variant="ghost"
               size="icon"
               className="md:hidden"
-              aria-label="Open navigation"
+              aria-label={open ? "Close navigation" : "Open navigation"}
               aria-expanded={open}
+              aria-controls="mobile-navigation"
               onClick={() => setOpen((value) => !value)}
             >
               <Menu className="size-4" />
@@ -100,12 +102,13 @@ export function SiteHeader() {
       </div>
 
       {open && isSignedIn ? (
-        <nav className="border-t px-4 py-2 md:hidden">
+        <nav id="mobile-navigation" className="border-t px-4 py-2 md:hidden">
           {links.map((link) => (
             <Link
               key={link.href}
               href={link.href}
               onClick={() => setOpen(false)}
+              aria-current={pathname === link.href ? "page" : undefined}
               className={cn(
                 "block rounded-md px-3 py-2 text-sm",
                 pathname === link.href ? "bg-muted font-medium" : "text-muted-foreground",
