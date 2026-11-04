@@ -20,7 +20,10 @@ retries and an error workflow) are implemented and tested. See
 ```bash
 npm install
 
-# 1. Link a Convex dev deployment (writes NEXT_PUBLIC_CONVEX_URL to .env.local)
+# 1. Create the dev deployment (writes NEXT_PUBLIC_CONVEX_URL to .env.local).
+#    With no Convex account this is an anonymous LOCAL deployment: the backend
+#    lives on this machine (127.0.0.1:3210, HTTP actions :3211) and nothing in
+#    the cloud is involved. See "Local deployment notes" below.
 npx convex dev --once
 
 # 2. Clerk: create an app, then put the keys in .env.local (see below)
@@ -45,10 +48,12 @@ npx convex run seed:populate '{"ownerEmail":"you@example.com"}'
 #    hidden from the public board until you mark the loan returned.
 npx convex run seed:createDemoOverdueLoan
 
-# 8. Only if you want the automation to run. The webhook URL must be reachable from
-#    Convex's cloud, so local n8n needs a tunnel — see n8n/README.md.
+# 8. Only if you want the automation to run. On the default local deployment,
+#    localhost is reachable from the local backend, so this just works. On a
+#    cloud-linked deployment a local n8n cannot be reached and needs a tunnel —
+#    see n8n/README.md for both cases.
 npx convex env set LENDLOOP_SHARED_SECRET "$(openssl rand -hex 32)"
-npx convex env set N8N_WEBHOOK_URL https://<your-tunnel>/webhook/lendloop/request-event
+npx convex env set N8N_WEBHOOK_URL http://localhost:5678/webhook/lendloop/request-event
 ```
 
 See [`n8n/README.md`](n8n/README.md) for the n8n side. Without the shared secret and
@@ -58,6 +63,36 @@ failing silently.
 The seeded tools are owned by the address you passed to `ownerEmail`. To exercise
 the borrow flow end to end, sign in with a second account and request one of them;
 the first account can then approve, decline, and mark it returned.
+
+### Local deployment notes
+
+- Every `npx convex dev --once` run **without** a `.env.local` creates a new
+  anonymous local deployment: empty database, no env vars. Deleting `.env.local`
+  is a full reset — re-run the `convex env set` lines above afterwards. Nothing
+  is linked to a Convex account and nothing needs cleaning up there.
+- A local backend is not left running after `--once`. Keep `npx convex dev`
+  running in another terminal before `npx convex data ...` or any other CLI
+  command that needs the backend.
+- Keep ports free: 3000 (Next.js silently rebinds to 3001), 5678 (n8n), and 3210
+  and 3211 (Convex backend and HTTP actions).
+
+### Clerk without an account (quick preview only)
+
+The Clerk dashboard path below needs an account. To only see the app boot:
+
+```bash
+npx clerk init
+```
+
+This prints throwaway dev keys and writes them to `.env.local` with no dashboard
+and no login. Two caveats:
+
+- **Decline its `app/layout.tsx` modification** (or `git checkout
+app/layout.tsx` afterwards): this app already mounts `<ClerkProvider>` inside
+  `components/providers.tsx`, and `clerk init` wraps `<Providers>` in a second
+  one of its own, which the committed code does not want.
+- Dev keys are preview-grade. Sign-up, roles, automation recipients, and the e2e
+  suite all expect a real Clerk app from the dashboard path below.
 
 ### Clerk setup
 
@@ -344,6 +379,10 @@ Against the real deployment and a real n8n container (v2.46.4):
 | Forged signature at n8n webhook     | `401`                                    |
 | Daily workflow run twice            | **one** reminder row, confirmed once     |
 
+One footnote to the 404 rows: a _malformed_ id never reaches them — it is
+rejected at validation with `400 Invalid loanId.` The 404 path is for
+checksum-valid ids pointing at nothing.
+
 77 automated tests cover the signature scheme (including a known-answer vector
 computed independently in Python), the HTTP endpoints through `t.fetch`, the
 outbox and its retry ladder, the claim/confirm protocol, retry visibility,
@@ -358,10 +397,13 @@ docker compose up -d
 
 Then import and publish the workflows — see [`n8n/README.md`](n8n/README.md).
 
-**One caveat worth stating plainly:** Convex runs in the cloud, so it cannot reach
-`localhost:5678`. For real webhook delivery in local development you need a
-tunnel (e.g. `ngrok http 5678`) and must set `N8N_WEBHOOK_URL` to it. Without
-that, outbound jobs fail loudly and visibly — which is the designed behaviour,
+**One caveat worth stating plainly, and it depends on the deployment mode.**
+With the default anonymous local deployment, the Convex backend runs on this
+machine, so `localhost:5678` just works — no tunnel. With a cloud-linked
+deployment, Convex cannot reach `localhost:5678`, so local n8n needs a tunnel
+(e.g. `ngrok http 5678`) and `N8N_WEBHOOK_URL` must point at it. In either mode,
+a misconfigured URL fails loudly and visibly — outbound jobs retry and then end
+as `notification.failed` in the admin panel — which is the designed behaviour,
 not a bug.
 
 ## Security decisions
@@ -401,7 +443,7 @@ not a bug.
 ```bash
 npm test          # 77 unit/integration tests, convex-test, no deployment or keys needed
 npm run test:e2e  # 29 Playwright tests against the dev deployment (see e2e/README.md)
-npm run typecheck
+npm run typecheck # on a fresh clone, run `dev` or `build` first: Next generates route types
 npm run lint
 npm run build
 ```
@@ -520,7 +562,7 @@ proxy.ts                  # Clerk middleware (Next 16 renamed middleware → pro
 | `npm run build` / `start`      | Production build / serve                                                                           |
 | `npm test`                     | Vitest + convex-test                                                                               |
 | `npm run test:e2e`             | Playwright against the dev deployment                                                              |
-| `npm run typecheck`            | `tsc --noEmit`                                                                                     |
+| `npm run typecheck`            | `tsc --noEmit`; on a fresh clone run dev or build first (route types)                              |
 | `npm run lint`                 | ESLint                                                                                             |
 | `npm run format`               | Prettier, including Tailwind class sorting                                                         |
 | `npx convex run seed:populate` | Insert demo tools (needs `SEED_ENABLED=true`; pass `{"ownerEmail":"you@example.com"}` to own them) |

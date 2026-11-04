@@ -13,6 +13,12 @@ open http://localhost:5678
 
 Data persists in the `n8n_data` volume. To reset, `docker compose down -v`.
 
+**If the container crash-loops and `compose ps` stays on `health: starting`
+indefinitely**, read `docker compose logs`: a `Mismatching encryption keys`
+error means the volume predates your `N8N_ENCRYPTION_KEY` — an earlier `up`
+without the key let n8n generate and persist its own. The reset above is the
+fix: `docker compose down -v`, then `docker compose up -d` with the key set.
+
 ## Import the workflows
 
 n8n 2.x distinguishes draft from published workflows, so importing is not enough —
@@ -68,6 +74,10 @@ run claims nothing, so it sends nothing — exactly one row, confirmed once:
 cd .. && npx convex data loanActivity
 ```
 
+With a local deployment the backend is not left running by `--once`, so keep
+`npx convex dev` running in another terminal first; the CLI will ask for exactly
+that if you forget.
+
 A row with `kind: "reminder.sent"` but no `confirmedAt` is a queued reminder whose
 send or confirmation failed. The app labels it "Reminder queued", not "sent", and
 the failed execution is reported to the admin Automation tab by the error
@@ -82,23 +92,36 @@ npx convex run seed:populate '{"ownerEmail":"you@example.com"}'
 npx convex run seed:createDemoOverdueLoan
 ```
 
-## The one thing that will confuse you
+## The two things that can confuse you
 
-Convex runs in the cloud and **cannot reach `localhost:5678`**. So the
-`request-notification` webhook only fires if n8n is publicly reachable:
+Whether Convex — the webhook caller — can reach `localhost:5678` depends on the
+deployment mode, and both modes are supported:
 
-```bash
-ngrok http 5678
-npx convex env set N8N_WEBHOOK_URL https://<your-id>.ngrok-free.app/webhook/lendloop/request-event
-```
+- **Anonymous local deployment** (the default of `npx convex dev --once` with no
+  Convex account): the backend runs on this machine, so outbound webhooks reach
+  local n8n with no tunnel, and `N8N_WEBHOOK_URL` is
+  `http://localhost:5678/webhook/lendloop/request-event`. The _reverse_
+  direction is the one to watch: `LENDLOOP_SITE_URL` is the HTTP-actions port
+  from `.env.local` (NEXT_PUBLIC_CONVEX_SITE_URL, e.g. `127.0.0.1:3211`), but
+  n8n runs in a container while Convex runs on the host, so write it as
+  `http://host.docker.internal:3211`.
+- **Cloud-linked deployment**: Convex runs in the cloud and cannot reach
+  `localhost:5678`, so the request-notification webhook only fires if n8n is
+  publicly reachable:
 
-Without a tunnel, outbound jobs retry five times (six attempts in total, over
-about six hours) and then show as
+  ```bash
+  ngrok http 5678
+  npx convex env set N8N_WEBHOOK_URL https://<your-id>.ngrok-free.app/webhook/lendloop/request-event
+  ```
+
+In either mode, a misconfigured outbound URL fails loudly: jobs retry five times
+(six attempts in total, over about six hours) and then show as
 `notification.failed` in the admin Automation tab. That is the designed failure
 mode — it is how you _know_ the integration is not wired up, instead of never
 finding out.
 
-The n8n → Convex direction needs no tunnel: Convex is already public.
+The n8n → Convex direction needs no tunnel in either mode: a local backend is
+reachable at `host.docker.internal`, a cloud deployment is already public.
 
 ## Secrets
 
@@ -112,7 +135,9 @@ The n8n → Convex direction needs no tunnel: Convex is already public.
 stores it in the volume, so credentials silently become unreadable if the volume
 is rebuilt.
 
-Set the shared secret on Convex with:
+Set the shared secret on Convex with (from the **repo root** — run from `n8n/`,
+the CLI cannot find a deployment and fails with a misleading
+"No CONVEX_DEPLOYMENT set"):
 
 ```bash
 npx convex env set LENDLOOP_SHARED_SECRET "$(openssl rand -hex 32)"
