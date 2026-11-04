@@ -31,23 +31,33 @@ npx convex env set CLERK_JWT_ISSUER_DOMAIN https://your-app.clerk.accounts.dev
 # 4. This address becomes admin (add it before or after signing up — either works)
 npx convex env set ADMIN_EMAILS you@example.com
 
-# 5. Optional: ten demo tools so the public page isn't empty
-npx convex env set SEED_ENABLED true
-npx convex run seed:populate
+# 5. Start the app and sign up at http://localhost:3000 with that address.
+npm run dev
 
-# 6. Only if you want the automation to run. The webhook URL must be reachable from
+# 6. In a second terminal, after signing in once, optionally seed ten demo tools
+#    under YOUR account. Passing ownerEmail is what makes them usable: you can
+#    approve and return requests against them. Without it they belong to a demo
+#    account that cannot sign in, so they are read-only in practice.
+npx convex env set SEED_ENABLED true
+npx convex run seed:populate '{"ownerEmail":"you@example.com"}'
+
+# 7. Optional: one already-overdue loan for the reminder workflow. That tool is
+#    hidden from the public board until you mark the loan returned.
+npx convex run seed:createDemoOverdueLoan
+
+# 8. Only if you want the automation to run. The webhook URL must be reachable from
 #    Convex's cloud, so local n8n needs a tunnel — see n8n/README.md.
 npx convex env set LENDLOOP_SHARED_SECRET "$(openssl rand -hex 32)"
 npx convex env set N8N_WEBHOOK_URL https://<your-tunnel>/webhook/lendloop/request-event
-
-npm run dev
 ```
 
-See [`n8n/README.md`](n8n/README.md) for the n8n side. Without these two, every
-loan event records a visible `notification.failed` rather than failing silently.
+See [`n8n/README.md`](n8n/README.md) for the n8n side. Without the shared secret and
+webhook URL, every loan event records a visible `notification.failed` rather than
+failing silently.
 
-Open http://localhost:3000, sign up with the email you put in `ADMIN_EMAILS`, and
-the Admin tab appears.
+The seeded tools are owned by the address you passed to `ownerEmail`. To exercise
+the borrow flow end to end, sign in with a second account and request one of them;
+the first account can then approve, decline, and mark it returned.
 
 ### Clerk setup
 
@@ -56,6 +66,10 @@ the Admin tab appears.
 3. **JWT Templates → New → "convex"** → copy the **Issuer** URL. This template is
    what makes Convex trust Clerk's tokens; without it Convex rejects every
    request.
+4. The template must include the `email`, `name`, and `picture` claims. Without
+   `email`, the `users` row is created with an empty address, notifications have
+   no recipient, and `ADMIN_EMAILS` never matches. The stock "convex" template
+   includes all three; if you build the claims by hand, do not omit them.
 
 ### Environment variables
 
@@ -117,17 +131,21 @@ writes the outbox row, which is what makes the notification path reliable.
 ## Data model
 
 ```ts
-users          clerkId (unique), name, email, imageUrl?, role, trustedLender, createdAt
-tools          ownerId, name, category, condition, description, archivedAt?, timestamps
-loans          toolId, ownerId, borrowerId, startDate, endDate, status,
-               message?, decidedAt?, returnedAt?, timestamps
-auditEvents    actorId, action, targetType, targetId, summary, createdAt
+users           clerkId (unique), name, email, imageUrl?, role, trustedLender, createdAt
+tools           ownerId, name, category, condition, description, archivedAt?, timestamps
+loans           toolId, ownerId, borrowerId, startDate, endDate, status,
+                message?, decidedAt?, returnedAt?, timestamps
+automationJobs  eventKey, kind, loanId, payload, status, attempts, nextAttemptAt,
+                lastError?, timestamps
+loanActivity    loanId?, kind, channel, detail, dedupeKey?, confirmedAt?, createdAt
+auditEvents     actorId, action, targetType, targetId, summary, createdAt
 ```
 
 **Indexes that correspond to real queries:** `users.by_clerk_id` (every request
 resolves an identity), `loans.by_tool` (overlap checks), `loans.by_owner` and
 `loans.by_borrower` (the two inbox views), `loans.by_status_end` (the overdue
-query), `automationJobs.by_status_next` (failed-delivery view),
+query), `loans.by_status_start` (what is currently out, including overdue),
+`automationJobs.by_status_next` (retrying and failed delivery views),
 `loanActivity.by_dedupe` (idempotency lookups), `tools.by_owner`,
 `tools.by_category`, `tools.by_archived`, `loanActivity.by_created` and
 `loanActivity.by_loan_created`, plus `automationJobs.by_loan`, which only the
@@ -142,7 +160,10 @@ Three decisions worth defending:
 - **Deletes are soft.** `tools.archivedAt` keeps loan history and audit records
   pointing at something real. A hard delete would orphan every past loan.
 - **Availability is derived, never stored.** A tool is "lent" if an `approved`
-  loan covers today. There is no status column to drift out of sync.
+  loan has started and has not been marked returned. There is no status column to
+  drift out of sync, and an overdue loan keeps the tool out of the board until the
+  lender closes it. The next future booking is reported alongside, so "available
+  today" does not hide "booked for the weekend".
 
 Loan states:
 
@@ -178,11 +199,16 @@ for convenience only.
 | Remove any listing, see all loans, set trusted lender | Admin only                                   |
 | Change roles                                          | Admin, but never their own                   |
 
-Four things this does deliberately:
+Five things this does deliberately:
 
 - **The caller is identified by `identity.tokenIdentifier`**, derived from the
   verified JWT. A user id in an argument is only ever a _target_, never proof of
   who is calling.
+- **The first write provisions the caller's row.** A mutation that finds no
+  `users` row creates one from the verified identity before checking permissions.
+  `users.sync` still refreshes name/email/avatar and applies `ADMIN_EMAILS`, but it
+  is no longer a prerequisite for acting, so a brand-new user cannot race it and
+  get "You must be signed in." on their first click.
 - **Admins cannot approve loans.** They can see every loan, but the decision to
   lend a real object belongs to the person who owns it. This is a product
   judgement, and it's the kind of thing that matters more than a role check.
@@ -194,14 +220,23 @@ Four things this does deliberately:
   path. Admins who are not in the env var are managed normally from the panel.
 
 These are not just asserted — `convex/lendloop.test.ts` runs the negative cases as
-multiple mocked users (31 tests). A non-admin calling `admin.allUsers` fails. A
+multiple mocked users (34 tests). A non-admin calling `admin.allUsers` fails. A
 borrower approving their own request fails. An unrelated user reading a loan
-fails.
+fails. A first-time caller is provisioned but still cannot archive someone
+else's listing.
 
 ### Availability and overlap
 
 - Only `approved` loans reserve a tool. Several neighbors may hold `pending`
   requests for the same weekend — the owner picks.
+- An approved loan keeps the tool reserved until it is marked returned, including
+  after its return date. An overdue tool is hidden from the public board and new
+  requests are refused with a clear message rather than promised against a tool
+  that is still out.
+- The board also shows the next future booking, so a tool that is free today but
+  taken next weekend is not presented as simply "available".
+- The request form checks the picked range against approved bookings before
+  submitting; the mutation re-checks the same rule.
 - Approving re-checks the range, because a competing request may have been
   approved while this one sat in the queue.
 - Requests are whole UTC days, maximum 90, and cannot start in the past.
@@ -212,11 +247,11 @@ fails.
 
 Three n8n workflows, all in [`n8n/workflows/`](n8n/workflows/):
 
-| Workflow                    | Trigger           | What it does                                                                    |
-| --------------------------- | ----------------- | ------------------------------------------------------------------------------- |
-| `request-notification.json` | Convex webhook    | Verifies the HMAC, renders the right message for lender or borrower, returns it |
-| `overdue-reminders.json`    | Daily 08:00       | Fetches overdue loans, notifies each borrower, writes the reminder back         |
-| `error-handler.json`        | n8n error trigger | Reports failed runs to the app so they are visible to admins                    |
+| Workflow                    | Trigger           | What it does                                                                              |
+| --------------------------- | ----------------- | ----------------------------------------------------------------------------------------- |
+| `request-notification.json` | Convex webhook    | Verifies the HMAC, renders the right message for lender or borrower, returns it           |
+| `overdue-reminders.json`    | Daily 08:00       | Fetches overdue loans, claims a reminder, sends it, then confirms the send back to Convex |
+| `error-handler.json`        | n8n error trigger | Reports failed runs to the app so they are visible to admins                              |
 
 ### Reliability: the outbox
 
@@ -235,8 +270,10 @@ mutation                                  action (can use fetch)
 The state change and the intent to notify commit together or not at all. Convex
 retries a failed mutation by rolling it back, so a retry cannot insert a second
 job. After the last attempt the job is marked `failed` **and** a
-`notification.failed` activity row is written, which shows up in the admin
-Automation tab — nothing fails silently.
+`notification.failed` activity row is written. Jobs that are still retrying are
+listed in the admin Automation tab with their attempt count, last error, and next
+attempt time, so a broken webhook is visible on the first failure rather than
+after the ladder exhausts.
 
 ### Security: signing in both directions
 
@@ -254,12 +291,13 @@ Automation tab — nothing fails silently.
 - Secrets live in Convex deployment env and `n8n/.env`; the exported JSON contains
   only `{{ $env.LENDLOOP_SHARED_SECRET }}` references.
 
-All three HTTP endpoints fail closed with `503` if the secret is unset.
+All four HTTP endpoints fail closed with `503` if the secret is unset.
 
 ### Idempotent write-backs
 
 ```
-POST /automation/reminders
+POST /automation/reminders          claim
+POST /automation/reminders/confirm  after the send
 Idempotency-Key: reminder:<loanId>:<dueDate>:<daystamp>
 ```
 
@@ -268,34 +306,48 @@ collapse onto the same row. The lookup and insert happen in one serializable
 mutation. A replay returns `200 { duplicate: true }` rather than a conflict,
 because for n8n a retry that already succeeded is a success.
 
+The write-back is two-phase because claiming and sending are different facts. The
+claim row is written **before** the notification so a retry cannot create a
+second reminder, but it is stored without `confirmedAt` and the app labels it
+"Reminder queued". Only after the send succeeds does the workflow call
+`/automation/reminders/confirm`, which patches `confirmedAt` and turns the label
+into "Reminder sent". If the send or the confirmation fails, the claim stays
+queued and the workflow fails into the error workflow rather than reporting a
+delivery that never happened. Confirming a reminder that was never claimed is a
+`404`, so n8n cannot invent activity for an arbitrary loan.
+
 ### What n8n can and cannot do
 
 The endpoints can only append activity to a loan that already exists. n8n cannot
 change loan status, reassign ownership, or touch any other table. An attacker
-with full control of the n8n instance can mark a reminder as sent for an existing
-loan — that is the entire blast radius.
+with full control of the n8n instance can claim and confirm a reminder for an
+existing loan — that is the entire blast radius.
 
 ### Verified end to end
 
 Against the real deployment and a real n8n container (v2.46.4):
 
-| Check                               | Result                               |
-| ----------------------------------- | ------------------------------------ |
-| Unsigned request                    | `401`                                |
-| Signed request                      | `200`                                |
-| Stale timestamp (10 min)            | `401`                                |
-| Tampered body                       | `401`                                |
-| POST without idempotency key        | `400`                                |
-| Reminder write-back                 | `{ duplicate: false }`               |
-| Replay of the same key              | `{ duplicate: true }`                |
-| Unknown loan id                     | `404`                                |
-| Signed event from n8n's perspective | `200`, correct recipient and message |
-| Forged signature at n8n webhook     | `401`                                |
-| Daily workflow run twice            | **one** reminder row                 |
+| Check                               | Result                                   |
+| ----------------------------------- | ---------------------------------------- |
+| Unsigned request                    | `401`                                    |
+| Signed request                      | `200`                                    |
+| Stale timestamp (10 min)            | `401`                                    |
+| Tampered body                       | `401`                                    |
+| POST without idempotency key        | `400`                                    |
+| Reminder claim                      | `{ duplicate: false, confirmed: false }` |
+| Replay of the same key              | `{ duplicate: true }`                    |
+| Confirmation                        | `{ duplicate: false }`                   |
+| Replay of the confirmation          | `{ duplicate: true }`                    |
+| Confirming an unclaimed reminder    | `404`                                    |
+| Unknown loan id                     | `404`                                    |
+| Signed event from n8n's perspective | `200`, correct recipient and message     |
+| Forged signature at n8n webhook     | `401`                                    |
+| Daily workflow run twice            | **one** reminder row, confirmed once     |
 
-62 automated tests cover the signature scheme (including a known-answer vector
+77 automated tests cover the signature scheme (including a known-answer vector
 computed independently in Python), the HTTP endpoints through `t.fetch`, the
-outbox and its retry ladder, idempotency, and the overdue query.
+outbox and its retry ladder, the claim/confirm protocol, retry visibility,
+idempotency, availability (including overdue loans), and the overdue query.
 
 ### Local n8n
 
@@ -338,14 +390,17 @@ not a bug.
   the tool name, dates, and status — never the other party's contact details. The
   overdue payload is six fields. No descriptions, no addresses, no loan history.
 - **Seed data** is fictional and gated behind an env flag, so it can't land in a
-  real environment by accident.
+  real environment by accident. Passing `ownerEmail` assigns it to a real account,
+  so the demo listings can be approved and returned instead of dead-ending on a
+  demo owner that cannot sign in.
 
 ---
 
 ## Testing
 
 ```bash
-npm test        # 62 tests, convex-test, no deployment or keys needed
+npm test          # 77 unit/integration tests, convex-test, no deployment or keys needed
+npm run test:e2e  # 29 Playwright tests against the dev deployment (see e2e/README.md)
 npm run typecheck
 npm run lint
 npm run build
@@ -361,6 +416,12 @@ resistance, validation limits, public payload shape, owner-vs-stranger edits,
 every admin-only function, the full request → approve → return flow, self-approval,
 overlap rejection, double-approval races, cancellation rules, and the label/schema
 consistency guard.
+
+The Playwright suite takes the other half: real Clerk sessions, the Next.js proxy,
+and the n8n hop. It creates three throwaway users, drives the full borrow
+lifecycle in two browsers, proves the negative authorization cases by calling
+Convex directly with each user's own token, and runs the scheduled workflow twice
+to show the write-back is idempotent. Setup and caveats: [`e2e/README.md`](e2e/README.md).
 
 ---
 
@@ -381,18 +442,22 @@ components/
 convex/
   schema.ts               # tables, enums, indexes
   lib/authz.ts            # requireViewer / requireAdmin / assertLoanParticipant
+  lib/viewer.ts           # identity → users row (lazy provisioning + bootstrap)
   lib/validation.ts       # pure input + date-range rules
-  lib/loans.ts            # availability map, overlap check, overdue predicate
+  lib/loans.ts            # availability map, next booking, overlap, overdue
   users.ts tools.ts loans.ts admin.ts
-  http.ts                 # signed inbound endpoints (overdue, reminders, failures)
+  http.ts                 # signed inbound endpoints (overdue, claim, confirm, failures)
   automation.ts           # outbox, delivery with retries, idempotent write-back
   lib/signing.ts          # HMAC + canonical JSON
-  lendloop.test.ts        # 31 tests
-  automation.test.ts      # 19 tests
-  http.test.ts            # 12 tests
+  lendloop.test.ts        # 34 tests
+  automation.test.ts      # 22 tests
+  http.test.ts            # 15 tests
+  seed.test.ts            # 6 tests
   seed.ts
 docs/n8n-design.md
 n8n/                      # compose + compose README
+e2e/                      # Playwright suite + its README
+playwright.config.ts
 proxy.ts                  # Clerk middleware (Next 16 renamed middleware → proxy)
 ```
 
@@ -433,7 +498,8 @@ proxy.ts                  # Clerk middleware (Next 16 renamed middleware → pro
 
 - Preview deployments per PR, with a seeded dataset.
 - Structured logging and alerting on mutation error rate.
-- A real test-user flow with `@clerk/testing` for browser tests.
+- A dedicated CI Clerk instance with ephemeral test users (the browser suite
+  currently creates them in the shared dev instance).
 
 ## Deliberate omissions
 
@@ -447,13 +513,14 @@ proxy.ts                  # Clerk middleware (Next 16 renamed middleware → pro
 
 ## Scripts
 
-| Command                        | What it does                                  |
-| ------------------------------ | --------------------------------------------- |
-| `npm run dev`                  | Next.js dev server                            |
-| `npx convex dev`               | Push functions and stream logs                |
-| `npm run build` / `start`      | Production build / serve                      |
-| `npm test`                     | Vitest + convex-test                          |
-| `npm run typecheck`            | `tsc --noEmit`                                |
-| `npm run lint`                 | ESLint                                        |
-| `npm run format`               | Prettier, including Tailwind class sorting    |
-| `npx convex run seed:populate` | Insert demo tools (needs `SEED_ENABLED=true`) |
+| Command                        | What it does                                                                                       |
+| ------------------------------ | -------------------------------------------------------------------------------------------------- |
+| `npm run dev`                  | Next.js dev server                                                                                 |
+| `npx convex dev`               | Push functions and stream logs                                                                     |
+| `npm run build` / `start`      | Production build / serve                                                                           |
+| `npm test`                     | Vitest + convex-test                                                                               |
+| `npm run test:e2e`             | Playwright against the dev deployment                                                              |
+| `npm run typecheck`            | `tsc --noEmit`                                                                                     |
+| `npm run lint`                 | ESLint                                                                                             |
+| `npm run format`               | Prettier, including Tailwind class sorting                                                         |
+| `npx convex run seed:populate` | Insert demo tools (needs `SEED_ENABLED=true`; pass `{"ownerEmail":"you@example.com"}` to own them) |

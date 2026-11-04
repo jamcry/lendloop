@@ -510,6 +510,58 @@ describe("public availability", () => {
     await asAlice.mutation(api.loans.markReturned, { loanId });
     expect(await t.query(api.tools.listPublic, {})).toHaveLength(1);
   });
+
+  it("keeps an overdue tool out until the lender marks it returned", async () => {
+    const t = setup();
+    const toolId = await createTool(t, alice);
+    const asAlice = await signIn(t, alice);
+    const asBob = await signIn(t, bob);
+
+    const loanId = await asBob.mutation(api.loans.request, { toolId, ...range(0, 0) });
+    await asAlice.mutation(api.loans.decide, { loanId, decision: "approved" });
+
+    // The loan ran out two days ago and was never marked returned. The old
+    // predicate only looked at `endDate >= today`, so the tool reappeared as
+    // available while it was still physically out.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(loanId, {
+        startDate: todayUtc() - 5 * DAY,
+        endDate: todayUtc() - 2 * DAY,
+      });
+    });
+
+    expect(await t.query(api.tools.listPublic, {})).toHaveLength(0);
+
+    const [tool] = await asBob.query(api.tools.browse, {});
+    expect(tool.availability).toMatchObject({ state: "lent", overdue: true });
+
+    await expect(
+      asBob.mutation(api.loans.request, { toolId, ...range(30, 31) }),
+    ).rejects.toThrow(/still out on loan/i);
+
+    await asAlice.mutation(api.loans.markReturned, { loanId });
+    expect(await t.query(api.tools.listPublic, {})).toHaveLength(1);
+    expect((await asBob.query(api.tools.browse, {}))[0].availability.state).toBe(
+      "available",
+    );
+  });
+
+  it("shows the next booking without calling a future loan lent", async () => {
+    const t = setup();
+    const toolId = await createTool(t, alice);
+    const asAlice = await signIn(t, alice);
+    const asBob = await signIn(t, bob);
+
+    const loanId = await asBob.mutation(api.loans.request, { toolId, ...range(10, 12) });
+    await asAlice.mutation(api.loans.decide, { loanId, decision: "approved" });
+
+    const [tool] = await asBob.query(api.tools.browse, {});
+    expect(tool.availability.state).toBe("available");
+    expect(tool.nextBooking).toEqual({
+      startDate: todayUtc() + 10 * DAY,
+      endDate: todayUtc() + 12 * DAY,
+    });
+  });
 });
 
 describe("date normalization", () => {
@@ -578,13 +630,43 @@ describe("archived listings with pending requests", () => {
 });
 
 describe("mutations refuse instead of silently no-oping", () => {
-  it("rejects an archive from a caller with no mirrored account", async () => {
+  it("lets a first-time caller write without waiting for users.sync", async () => {
+    const t = setup();
+
+    // No sync call: `requireViewer` provisions the row from the verified identity,
+    // which is what closes the sign-in race in the browser.
+    const fresh = t.withIdentity({
+      tokenIdentifier: "clerk|fresh",
+      subject: "fresh",
+      email: "fresh@example.com",
+      name: "Fresh",
+    });
+
+    const toolId = await fresh.mutation(api.tools.create, {
+      name: "First write",
+      category: "garden",
+      condition: "good",
+      description: "Created before any explicit sync.",
+    });
+
+    const user = await t.run(async (ctx) =>
+      ctx.db
+        .query("users")
+        .withIndex("by_clerk_id", (q) => q.eq("clerkId", "clerk|fresh"))
+        .unique(),
+    );
+    expect(user?.role).toBe("user");
+
+    const tool = await t.run(async (ctx) => ctx.db.get(toolId));
+    expect(tool?.ownerId).toBe(user?._id);
+  });
+
+  it("provisions a first-time caller but still refuses their archive", async () => {
     const t = setup();
     const toolId = await createTool(t, alice);
 
-    // A valid identity that has never been synced has no users row. A mutation
-    // must fail loudly: returning success here would let the UI toast
-    // "Listing removed" for a write that never happened.
+    // A valid identity that has never been synced is provisioned by the mutation,
+    // but that is only identity — it is not permission to touch someone else's row.
     const ghost = t.withIdentity({
       tokenIdentifier: "clerk|ghost",
       subject: "ghost",
@@ -593,7 +675,7 @@ describe("mutations refuse instead of silently no-oping", () => {
     });
 
     await expect(ghost.mutation(api.tools.archive, { id: toolId })).rejects.toThrow(
-      /signed in/i,
+      /only remove your own/i,
     );
 
     const tool = await t.run(async (ctx) => ctx.db.get(toolId));

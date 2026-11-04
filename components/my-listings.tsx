@@ -41,7 +41,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { formatDate } from "@/lib/dates";
+import { formatDate, formatRange } from "@/lib/dates";
 import { errorMessage } from "@/lib/errors";
 import {
   CATEGORY_LABELS,
@@ -59,7 +59,8 @@ type Listing = {
   category: string;
   condition: string;
   description: string;
-  availability: { state: "available" | "lent"; until: number | null };
+  availability: { state: "available" | "lent"; until: number | null; overdue: boolean };
+  nextBooking: { startDate: number; endDate: number } | null;
   archivedAt: number | null;
 };
 
@@ -122,6 +123,7 @@ export function MyListings() {
                       <AvailabilityPill
                         state={listing.availability.state}
                         until={listing.availability.until}
+                        overdue={listing.availability.overdue}
                         formatDate={formatDate}
                       />
                     )}
@@ -130,6 +132,15 @@ export function MyListings() {
                     {categoryLabel(listing.category)} ·{" "}
                     {conditionLabel(listing.condition)}
                   </p>
+                  {listing.nextBooking ? (
+                    <p className="text-muted-foreground text-xs">
+                      Next booking{" "}
+                      {formatRange(
+                        listing.nextBooking.startDate,
+                        listing.nextBooking.endDate,
+                      )}
+                    </p>
+                  ) : null}
                 </div>
 
                 <div className="flex items-center gap-1">

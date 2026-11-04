@@ -365,6 +365,49 @@ describe("idempotent write-back", () => {
   });
 });
 
+describe("reminder confirmation", () => {
+  it("does not call a claim sent until it is confirmed", async () => {
+    const t = setup();
+    const { loanId } = await makeLoan(t);
+    const args = {
+      loanId: loanId as Id<"loans">,
+      idempotencyKey: "reminder:two-phase",
+      channel: "mock",
+      detail: "Overdue reminder",
+    };
+
+    const claim = await t.mutation(internal.automation.recordReminder, args);
+    expect(claim.confirmed).toBe(false);
+
+    const first = await t.mutation(internal.automation.confirmReminder, {
+      loanId: args.loanId,
+      idempotencyKey: args.idempotencyKey,
+    });
+    expect(first).toEqual({ duplicate: false, conflict: false });
+
+    const second = await t.mutation(internal.automation.confirmReminder, {
+      loanId: args.loanId,
+      idempotencyKey: args.idempotencyKey,
+    });
+    expect(second).toEqual({ duplicate: true, conflict: false });
+
+    const replay = await t.mutation(internal.automation.recordReminder, args);
+    expect(replay.confirmed).toBe(true);
+  });
+
+  it("refuses to confirm an unclaimed reminder", async () => {
+    const t = setup();
+    const { loanId } = await makeLoan(t);
+
+    await expect(
+      t.mutation(internal.automation.confirmReminder, {
+        loanId: loanId as Id<"loans">,
+        idempotencyKey: "reminder:never-claimed",
+      }),
+    ).rejects.toThrow(/unknown reminder/i);
+  });
+});
+
 describe("overdue query", () => {
   it("returns only approved loans past their return date, with minimal fields", async () => {
     const t = setup();
@@ -476,6 +519,47 @@ describe("workflow failure reporting", () => {
     expect(
       await t.run(async (ctx) => (await ctx.db.query("loanActivity").collect()).length),
     ).toBe(1);
+  });
+});
+
+describe("retry visibility", () => {
+  it("shows jobs that have failed at least once, to admins only", async () => {
+    const t = setup();
+    const { loanId } = await makeLoan(t);
+
+    const job = await t.run(async (ctx) =>
+      ctx.db
+        .query("automationJobs")
+        .withIndex("by_loan", (q) => q.eq("loanId", loanId))
+        .first(),
+    );
+    if (!job) throw new Error("no job queued");
+
+    // Simulate the first failed attempt: the retry is scheduled, but nothing has
+    // written a permanent failure row yet.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(job._id, {
+        attempts: 2,
+        lastError: "n8n responded 500",
+        nextAttemptAt: Date.now() + 60_000,
+      });
+    });
+
+    const asAlice = await signIn(t, alice);
+    expect(await asAlice.query(api.automation.retryingJobs, {})).toEqual([]);
+
+    await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query("users")
+        .withIndex("by_clerk_id", (q) => q.eq("clerkId", alice.tokenIdentifier))
+        .unique();
+      if (row) await ctx.db.patch(row._id, { role: "admin" });
+    });
+
+    const retrying = await asAlice.query(api.automation.retryingJobs, {});
+    expect(retrying).toHaveLength(1);
+    expect(retrying[0].attempts).toBe(2);
+    expect(retrying[0].lastError).toMatch(/500/);
   });
 });
 

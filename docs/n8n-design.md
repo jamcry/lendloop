@@ -102,13 +102,14 @@ string from the same data. The first live test against n8n returned
 
 ## 4. Inbound (n8n → app)
 
-Three HTTP endpoints on Convex's `httpRouter`:
+Four HTTP endpoints on Convex's `httpRouter`:
 
-| Endpoint                | Method | Purpose                                 |
-| ----------------------- | ------ | --------------------------------------- |
-| `/automation/overdue`   | GET    | Scheduled workflow polls overdue loans  |
-| `/automation/reminders` | POST   | Workflow claims a reminder (idempotent) |
-| `/automation/failures`  | POST   | Error workflow reports a failed run     |
+| Endpoint                        | Method | Purpose                                 |
+| ------------------------------- | ------ | --------------------------------------- |
+| `/automation/overdue`           | GET    | Scheduled workflow polls overdue loans  |
+| `/automation/reminders`         | POST   | Workflow claims a reminder (idempotent) |
+| `/automation/reminders/confirm` | POST   | Workflow confirms the reminder was sent |
+| `/automation/failures`          | POST   | Error workflow reports a failed run     |
 
 `GET /overdue` wraps the internal query
 `automation.overdueLoans`. It returns six fields — `loanId`, `toolName`,
@@ -118,29 +119,44 @@ reminder needs and nothing more.
 ### Write-back idempotency
 
 ```
-POST /automation/reminders
+POST /automation/reminders          claim
+POST /automation/reminders/confirm  after the send
 Idempotency-Key: reminder:<loanId>:<dueDate>:<daystamp>
 ```
 
 - The key is stored on the activity row (`loanActivity.dedupeKey`). Convex has no
   unique indexes, so the lookup and the insert happen in **one mutation** — which
   is serializable, making the read-then-insert safe.
-- First call inserts; a replay returns `200 {duplicate: true}` rather than a 409,
+- First claim inserts; a replay returns `200 {duplicate: true}` rather than a 409,
   because for n8n a retry that already succeeded is a success.
 - Reusing a key for a _different_ loan returns `409`, since that is a caller bug,
   not a retry.
 - The key is derived from data, not random, so a _retried workflow run_ and a
   _duplicate schedule run_ collapse to the same key.
 
-### Claim before sending
+### Claim, send, confirm
 
-The reminder is **claimed first, then sent**. The workflow posts the idempotent
-write-back, and only items where the response says `duplicate: false` proceed to
-the notification node. Ordering it the other way — send, then record — makes "run
-twice, get one reminder" true of the database and false of the borrower's inbox.
-Verified by running the workflow twice against 3 overdue loans: the first run
-claimed and notified, the second run reported `duplicate: true` for every loan and
-sent nothing.
+The reminder is **claimed first, sent second, confirmed third**. The claim makes
+the record idempotent; the confirmation makes the label truthful.
+
+1. `POST /automation/reminders` writes the row **without** `confirmedAt`. The app
+   shows it as **"Reminder queued"**, not "Reminder sent".
+2. The workflow sends the notification. A duplicate claim is only skipped when the
+   response says `confirmed: true`; an unconfirmed duplicate is retried, so a
+   crashed earlier run cannot silence the reminder forever.
+3. `POST /automation/reminders/confirm` patches `confirmedAt` and the app shows
+   **"Reminder sent"**. Confirming a reminder that was never claimed returns `404`,
+   so n8n cannot invent activity for an arbitrary loan.
+
+If the send or the confirmation fails, the row stays queued, the workflow fails,
+and the error workflow records a `workflow.failed` row. Ordering it the other way
+— send, then record — makes "run twice, get one reminder" true of the database and
+false of the borrower's inbox.
+
+There is one deliberate at-least-once window: if the send succeeds but the
+confirmation never lands, a same-day re-run resends. The _record_ stays unique;
+for a reminder, a possible duplicate is better than a silent loss. The next day's
+run uses a new key regardless.
 
 Inbound requests authenticate the same way (HMAC + timestamp), so n8n cannot be
 spoofed either. That is the "secure in both directions" requirement.
@@ -174,16 +190,22 @@ it would be a second email.
 Daily 08:00 (plus a manual trigger for `n8n execute`)
   → Code: sign the GET
   → HTTP GET /automation/overdue (signed)
-  → Code: one item per overdue loan, each with its own signature + idempotency key
-  → HTTP POST /automation/reminders (per item, retry 3x, continue on error)
-  → Code: notify only where duplicate === false
+  → Code: one item per overdue loan, each with claim + confirm signatures
+  → HTTP POST /automation/reminders (per item, retry 3x)
+  → Code: send where the claim is new or unconfirmed, matched by loanId
+  → HTTP POST /automation/reminders/confirm (per item, retry 3x)
 ```
 
 No loop node: the HTTP Request node already runs once per input item, so fanning
 out is a Code node that returns an array.
 
-`continue-on-fail` on the write-back matters — one bad item must not stop
-reminders for everyone else.
+A failed claim stops the batch instead of silently skipping one loan. The execution
+fails, the error workflow records it, and the next daily run covers every overdue
+loan again. Continuing past a failed claim would leave one borrower un-reminded
+with no failed-run signal from the workflow; partial success here is not obviously
+better than a visible whole-run failure. The send node is matched by `loanId`, not
+array position, so a reordered or partial response cannot send one borrower's
+message to another.
 
 ### `error-handler.json`
 

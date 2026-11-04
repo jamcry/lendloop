@@ -1,9 +1,18 @@
+import { v } from "convex/values";
+
+import type { Id } from "./_generated/dataModel";
 import { internalMutation } from "./_generated/server";
 
 /**
  * Demo data so the public page is not empty on a fresh deployment.
  *
  *   npx convex run seed:populate
+ *   npx convex run seed:populate '{"ownerEmail":"you@example.com"}'
+ *
+ * With `ownerEmail`, the tools are assigned to that account, so the seeded
+ * listings are fully usable: you can approve and return requests against them.
+ * Without it, they belong to a demo account that cannot sign in, which makes them
+ * read-only in practice.
  *
  * Refuses to run unless SEED_ENABLED=true on the deployment, so it can never
  * quietly inject rows into a real environment.
@@ -84,34 +93,97 @@ const DEMO_TOOLS = [
   },
 ];
 
+const DEMO_TOOL_NAMES = new Set(DEMO_TOOLS.map((tool) => tool.name));
+
+function assertSeedingEnabled() {
+  if (process.env.SEED_ENABLED !== "true") {
+    throw new Error(
+      "Seeding is disabled. Set it with: npx convex env set SEED_ENABLED true",
+    );
+  }
+}
+
 export const populate = internalMutation({
-  args: {},
-  handler: async (ctx) => {
-    if (process.env.SEED_ENABLED !== "true") {
-      throw new Error(
-        "Seeding is disabled. Set it with: npx convex env set SEED_ENABLED true",
+  args: { ownerEmail: v.optional(v.string()) },
+  handler: async (ctx, { ownerEmail }) => {
+    assertSeedingEnabled();
+
+    const targetEmail = ownerEmail?.trim().toLowerCase();
+    let ownerId: Id<"users">;
+
+    if (targetEmail) {
+      const owner = (await ctx.db.query("users").collect()).find(
+        (user) => user.email === targetEmail,
       );
+      if (!owner) {
+        throw new Error(
+          `No user with email ${targetEmail}. Sign in once with that address, then run the seed again.`,
+        );
+      }
+      ownerId = owner._id;
+    } else {
+      const demo = await ctx.db
+        .query("users")
+        .withIndex("by_clerk_id", (q) => q.eq("clerkId", DEMO_CLERK_ID))
+        .unique();
+      ownerId =
+        demo?._id ??
+        (await ctx.db.insert("users", {
+          clerkId: DEMO_CLERK_ID,
+          name: "LendLoop Demo",
+          email: "demo@lendloop.local",
+          role: "user",
+          trustedLender: true,
+          createdAt: Date.now(),
+        }));
     }
 
-    const existing = await ctx.db
+    // Idempotent per owner, not globally: seeding under a real account after an
+    // earlier demo-account seed should not duplicate the ten listings.
+    const owned = await ctx.db
+      .query("tools")
+      .withIndex("by_owner", (q) => q.eq("ownerId", ownerId))
+      .collect();
+    if (owned.some((tool) => DEMO_TOOL_NAMES.has(tool.name))) {
+      return { seeded: false, message: "Demo data already present for this owner." };
+    }
+
+    // Adopt an earlier seed made under the non-login demo account. Tools and
+    // their loans are reassigned together, because `loans.ownerId` is denormalized
+    // and the new owner must be able to approve or close those loans.
+    const demo = await ctx.db
       .query("users")
       .withIndex("by_clerk_id", (q) => q.eq("clerkId", DEMO_CLERK_ID))
       .unique();
+    if (targetEmail && demo && demo._id !== ownerId) {
+      const demoTools = await ctx.db
+        .query("tools")
+        .withIndex("by_owner", (q) => q.eq("ownerId", demo._id))
+        .collect();
 
-    if (existing) {
-      return { seeded: false, message: "Demo data already present." };
+      if (demoTools.length > 0) {
+        const now = Date.now();
+        for (const tool of demoTools) {
+          await ctx.db.patch(tool._id, { ownerId, updatedAt: now });
+        }
+
+        const demoLoans = await ctx.db
+          .query("loans")
+          .withIndex("by_owner", (q) => q.eq("ownerId", demo._id))
+          .collect();
+        for (const loan of demoLoans) {
+          await ctx.db.patch(loan._id, { ownerId, updatedAt: now });
+        }
+
+        return {
+          seeded: true,
+          adopted: demoTools.length,
+          owner: targetEmail,
+        };
+      }
     }
 
     const now = Date.now();
-    const ownerId = await ctx.db.insert("users", {
-      clerkId: DEMO_CLERK_ID,
-      name: "LendLoop Demo",
-      email: "demo@lendloop.local",
-      role: "user",
-      trustedLender: true,
-      createdAt: now,
-    });
-
     for (const [index, tool] of DEMO_TOOLS.entries()) {
       await ctx.db.insert("tools", {
         ownerId,
@@ -122,7 +194,11 @@ export const populate = internalMutation({
       });
     }
 
-    return { seeded: true, tools: DEMO_TOOLS.length };
+    return {
+      seeded: true,
+      tools: DEMO_TOOLS.length,
+      owner: targetEmail ?? "LendLoop Demo",
+    };
   },
 });
 
@@ -139,13 +215,9 @@ const DEMO_BORROWER_CLERK_ID = "seed|lendloop-borrower";
 export const createDemoOverdueLoan = internalMutation({
   args: {},
   handler: async (ctx) => {
-    if (process.env.SEED_ENABLED !== "true") {
-      throw new Error(
-        "Seeding is disabled. Set it with: npx convex env set SEED_ENABLED true",
-      );
-    }
+    assertSeedingEnabled();
 
-    const existing = await ctx.db
+    const existingBorrower = await ctx.db
       .query("users")
       .withIndex("by_clerk_id", (q) => q.eq("clerkId", DEMO_BORROWER_CLERK_ID))
       .unique();
@@ -155,7 +227,7 @@ export const createDemoOverdueLoan = internalMutation({
     const today = Math.floor(now / day) * day;
 
     const borrowerId =
-      existing?._id ??
+      existingBorrower?._id ??
       (await ctx.db.insert("users", {
         clerkId: DEMO_BORROWER_CLERK_ID,
         name: "Demo Borrower",
@@ -164,6 +236,24 @@ export const createDemoOverdueLoan = internalMutation({
         trustedLender: false,
         createdAt: now,
       }));
+
+    // One overdue loan is enough for the reminder workflow; re-running this should
+    // not add another row every time.
+    const existingOverdue = await ctx.db
+      .query("loans")
+      .withIndex("by_borrower", (q) =>
+        q.eq("borrowerId", borrowerId).eq("status", "approved"),
+      )
+      .collect();
+    const overdue = existingOverdue.find((loan) => loan.endDate < today);
+    if (overdue) {
+      const tool = await ctx.db.get(overdue.toolId);
+      return {
+        created: false,
+        loanId: overdue._id,
+        toolName: tool?.name ?? "a tool",
+      };
+    }
 
     const tool = await ctx.db
       .query("tools")
@@ -187,6 +277,6 @@ export const createDemoOverdueLoan = internalMutation({
       updatedAt: now - 6 * day,
     });
 
-    return { loanId, toolName: tool.name };
+    return { created: true, loanId, toolName: tool.name };
   },
 });

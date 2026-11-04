@@ -97,7 +97,8 @@ export default defineSchema({
     .index("by_tool", ["toolId", "status"])
     .index("by_owner", ["ownerId", "status"])
     .index("by_borrower", ["borrowerId", "status"])
-    .index("by_status_end", ["status", "endDate"]),
+    .index("by_status_end", ["status", "endDate"])
+    .index("by_status_start", ["status", "startDate"]),
 
   /**
    * Admin-only trail for privileged actions (listing removal, role and
@@ -160,6 +161,10 @@ export default defineSchema({
     channel: v.string(),
     detail: v.string(),
     dedupeKey: v.optional(v.string()),
+    // Reminders are claimed before they are sent, so the claim can be written
+    // first and only marked confirmed after the send succeeds. Undefined means
+    // "queued"; the UI must not call that sent.
+    confirmedAt: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index("by_loan_created", ["loanId", "createdAt"])

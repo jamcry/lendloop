@@ -41,10 +41,12 @@ export function StatusPill({
 export function AvailabilityPill({
   state,
   until,
+  overdue = false,
   formatDate,
 }: {
   state: "available" | "lent";
   until: number | null;
+  overdue?: boolean;
   formatDate: (timestamp: number) => string;
 }) {
   if (state === "available") {
@@ -54,6 +56,17 @@ export function AvailabilityPill({
         className="border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300"
       >
         Available
+      </Badge>
+    );
+  }
+
+  if (overdue) {
+    return (
+      <Badge
+        variant="outline"
+        className="border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+      >
+        {until ? `Overdue since ${formatDate(until)}` : "Overdue"}
       </Badge>
     );
   }

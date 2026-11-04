@@ -2,6 +2,7 @@ import { ConvexError } from "convex/values";
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { findViewer, insertViewer } from "./viewer";
 
 /**
  * Authorization helpers.
@@ -39,17 +40,31 @@ export async function getViewer(ctx: Ctx): Promise<Viewer | null> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) return null;
 
-  return await ctx.db
-    .query("users")
-    .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.tokenIdentifier))
-    .unique();
+  return await findViewer(ctx, identity);
 }
 
-/** The signed-in user's row. Throws when signed out or missing. */
+/** Queries read; only mutations are allowed to create the row. */
+function canWrite(ctx: Ctx): ctx is MutationCtx {
+  return "insert" in ctx.db;
+}
+
+/**
+ * The signed-in user's row.
+ *
+ * In a mutation, a missing row is created from the verified identity, so the
+ * first write after sign-in cannot race the client's `users.sync`. In a query it
+ * still throws: a query must not write, and every read path that tolerates a
+ * missing row already handles `null` itself.
+ */
 export async function requireViewer(ctx: Ctx): Promise<Viewer> {
-  const viewer = await getViewer(ctx);
-  if (!viewer) unauthenticated();
-  return viewer;
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) unauthenticated();
+
+  const viewer = await findViewer(ctx, identity);
+  if (viewer) return viewer;
+
+  if (!canWrite(ctx)) unauthenticated();
+  return await insertViewer(ctx, identity);
 }
 
 export async function requireAdmin(ctx: Ctx): Promise<Viewer> {

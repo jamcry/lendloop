@@ -16,6 +16,11 @@ const eslintConfig = defineConfig([
     // Agent tooling written by `convex ai-files install`.
     ".agents/**",
     ".claude/**",
+    // Playwright artefacts contain bundled JS; they are build output, not source.
+    "e2e/.report/**",
+    "e2e/.results/**",
+    "playwright-report/**",
+    "test-results/**",
   ]),
 ]);
 

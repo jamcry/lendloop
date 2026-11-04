@@ -136,7 +136,12 @@ describe("POST /automation/reminders", () => {
       headers,
     });
     expect(first.status).toBe(200);
-    expect(await first.json()).toEqual({ ok: true, duplicate: false });
+    expect(await first.json()).toEqual({
+      ok: true,
+      duplicate: false,
+      confirmed: false,
+      loanId,
+    });
 
     const replay = await t.fetch("/automation/reminders", {
       method: "POST",
@@ -144,7 +149,12 @@ describe("POST /automation/reminders", () => {
       headers,
     });
     expect(replay.status).toBe(200);
-    expect(await replay.json()).toEqual({ ok: true, duplicate: true });
+    expect(await replay.json()).toEqual({
+      ok: true,
+      duplicate: true,
+      confirmed: false,
+      loanId,
+    });
 
     const rows = await t.run(async (ctx) =>
       ctx.db
@@ -193,6 +203,104 @@ describe("POST /automation/reminders", () => {
       headers: { ...(await signedHeaders(body)), "idempotency-key": "bad-id" },
     });
     expect(response.status).toBe(400);
+  });
+});
+
+describe("POST /automation/reminders/confirm", () => {
+  const key = "reminder:confirm:1";
+
+  async function claim(t: Test, loanId: Id<"loans">) {
+    const body = JSON.stringify({
+      loanId,
+      channel: "mock",
+      detail: "Overdue reminder",
+    });
+    const response = await t.fetch("/automation/reminders", {
+      method: "POST",
+      body,
+      headers: { ...(await signedHeaders(body)), "idempotency-key": key },
+    });
+    expect(response.status).toBe(200);
+    return body;
+  }
+
+  it("marks a claimed reminder confirmed, once", async () => {
+    const t = setup();
+    const { loanId } = await seedLoan(t);
+    await claim(t, loanId);
+
+    const body = JSON.stringify({ loanId });
+    const headers = { ...(await signedHeaders(body)), "idempotency-key": key };
+
+    const first = await t.fetch("/automation/reminders/confirm", {
+      method: "POST",
+      body,
+      headers,
+    });
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({ ok: true, duplicate: false });
+
+    const replay = await t.fetch("/automation/reminders/confirm", {
+      method: "POST",
+      body,
+      headers,
+    });
+    expect(await replay.json()).toEqual({ ok: true, duplicate: true });
+
+    // A rerun of the workflow now sees the claim as confirmed and must not resend.
+    const claimBody = await claim(t, loanId);
+    const claimReplay = await t.fetch("/automation/reminders", {
+      method: "POST",
+      body: claimBody,
+      headers: { ...(await signedHeaders(claimBody)), "idempotency-key": key },
+    });
+    expect(await claimReplay.json()).toEqual({
+      ok: true,
+      duplicate: true,
+      confirmed: true,
+      loanId,
+    });
+
+    const row = await t.run(async (ctx) =>
+      ctx.db
+        .query("loanActivity")
+        .withIndex("by_dedupe", (q) => q.eq("dedupeKey", key))
+        .unique(),
+    );
+    expect(row?.confirmedAt).toBeTypeOf("number");
+  });
+
+  it("refuses to confirm a reminder that was never claimed", async () => {
+    const t = setup();
+    const { loanId } = await seedLoan(t);
+    const body = JSON.stringify({ loanId });
+
+    const response = await t.fetch("/automation/reminders/confirm", {
+      method: "POST",
+      body,
+      headers: { ...(await signedHeaders(body)), "idempotency-key": "never-claimed" },
+    });
+    expect(response.status).toBe(404);
+  });
+
+  it("requires an idempotency key and a signature", async () => {
+    const t = setup();
+    const { loanId } = await seedLoan(t);
+    const body = JSON.stringify({ loanId });
+
+    const noKey = await t.fetch("/automation/reminders/confirm", {
+      method: "POST",
+      body,
+      headers: await signedHeaders(body),
+    });
+    expect(noKey.status).toBe(400);
+
+    const unsigned = await t.fetch("/automation/reminders/confirm", {
+      method: "POST",
+      body,
+      headers: { "content-type": "application/json", "idempotency-key": "unsigned" },
+    });
+    expect(unsigned.status).toBe(401);
   });
 });
 

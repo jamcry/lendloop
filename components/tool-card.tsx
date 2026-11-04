@@ -3,7 +3,7 @@ import Link from "next/link";
 
 import { AvailabilityPill, TrustedPill } from "@/components/status-pill";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
-import { formatDate } from "@/lib/dates";
+import { formatDate, formatRange } from "@/lib/dates";
 import { categoryLabel, conditionLabel } from "@/lib/labels";
 
 type ToolCardProps = {
@@ -15,7 +15,8 @@ type ToolCardProps = {
   ownerName: string;
   ownerTrustedLender: boolean;
   isMine: boolean;
-  availability: { state: "available" | "lent"; until: number | null };
+  availability: { state: "available" | "lent"; until: number | null; overdue: boolean };
+  nextBooking: { startDate: number; endDate: number } | null;
 };
 
 export function ToolCard({ tool }: { tool: ToolCardProps }) {
@@ -32,6 +33,7 @@ export function ToolCard({ tool }: { tool: ToolCardProps }) {
           <AvailabilityPill
             state={tool.availability.state}
             until={tool.availability.until}
+            overdue={tool.availability.overdue}
             formatDate={formatDate}
           />
         </div>
@@ -45,6 +47,13 @@ export function ToolCard({ tool }: { tool: ToolCardProps }) {
           <span>{conditionLabel(tool.condition)}</span>
           {tool.ownerTrustedLender ? <TrustedPill /> : null}
         </div>
+
+        {tool.nextBooking ? (
+          <p className="text-muted-foreground border-t pt-2 text-xs">
+            Next booking{" "}
+            {formatRange(tool.nextBooking.startDate, tool.nextBooking.endDate)}
+          </p>
+        ) : null}
       </CardContent>
 
       <CardFooter className="border-t px-5 py-3">

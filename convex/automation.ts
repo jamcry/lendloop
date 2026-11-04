@@ -287,6 +287,11 @@ export const deliver = internalAction({
  * `dedupeKey` comes from the request's `Idempotency-Key` header. The lookup and
  * the insert run in one serializable mutation, so a retried delivery collapses
  * onto the original row instead of creating a second reminder.
+ *
+ * This is the *claim* half of a two-phase write-back: the row exists before the
+ * workflow sends anything, but it is not marked confirmed until
+ * `confirmReminder` runs after a successful send. A claim that never gets
+ * confirmed is visible in the app as "Reminder queued", never as sent.
  */
 export const recordReminder = internalMutation({
   args: {
@@ -305,7 +310,14 @@ export const recordReminder = internalMutation({
       // A key must describe one loan. Reusing it for another loan is a bug on the
       // caller's side, not a retry, and must not report success.
       if (existing.loanId !== loanId) return { duplicate: false, conflict: true };
-      return { duplicate: true, activityId: existing._id };
+
+      return {
+        duplicate: true,
+        conflict: false,
+        activityId: existing._id,
+        confirmed: existing.confirmedAt !== undefined,
+        loanId,
+      };
     }
 
     const loan = await ctx.db.get(loanId);
@@ -320,7 +332,42 @@ export const recordReminder = internalMutation({
       createdAt: Date.now(),
     });
 
-    return { duplicate: false, activityId };
+    return {
+      duplicate: false,
+      conflict: false,
+      activityId,
+      confirmed: false,
+      loanId,
+    };
+  },
+});
+
+/**
+ * Marks a claimed reminder as actually sent.
+ *
+ * The same `Idempotency-Key` as the claim, so a retried confirmation patches the
+ * same row. A missing claim is a caller error: confirming something that was never
+ * claimed would let n8n invent records for arbitrary loans.
+ */
+export const confirmReminder = internalMutation({
+  args: {
+    loanId: v.id("loans"),
+    idempotencyKey: v.string(),
+  },
+  handler: async (ctx, { loanId, idempotencyKey }) => {
+    const existing = await ctx.db
+      .query("loanActivity")
+      .withIndex("by_dedupe", (q) => q.eq("dedupeKey", idempotencyKey))
+      .unique();
+
+    if (!existing) throw new ConvexError("Unknown reminder.");
+    if (existing.loanId !== loanId) return { duplicate: false, conflict: true };
+    if (existing.confirmedAt !== undefined) {
+      return { duplicate: true, conflict: false };
+    }
+
+    await ctx.db.patch(existing._id, { confirmedAt: Date.now() });
+    return { duplicate: false, conflict: false };
   },
 });
 
@@ -416,6 +463,40 @@ export const failedJobs = query({
       updatedAt: job.updatedAt,
       eventId: job.eventKey,
     }));
+  },
+});
+
+/**
+ * Jobs that have failed at least once and are waiting to retry.
+ *
+ * Without this the first hours of a broken integration look like success: the
+ * permanent `failed` row only appears after the whole ladder is exhausted. The
+ * admin panel shows these alongside failed jobs so an operator sees the problem
+ * on the first attempt, not the sixth.
+ */
+export const retryingJobs = query({
+  args: {},
+  handler: async (ctx) => {
+    const viewer = await getViewer(ctx);
+    if (viewer?.role !== "admin") return [];
+
+    const pending = await ctx.db
+      .query("automationJobs")
+      .withIndex("by_status_next", (q) => q.eq("status", "pending"))
+      .take(100);
+
+    return pending
+      .filter((job) => job.attempts > 0)
+      .sort((a, b) => a.nextAttemptAt - b.nextAttemptAt)
+      .slice(0, 20)
+      .map((job) => ({
+        id: job._id,
+        kind: job.kind,
+        attempts: job.attempts,
+        lastError: job.lastError ?? null,
+        nextAttemptAt: job.nextAttemptAt,
+        eventId: job.eventKey,
+      }));
   },
 });
 

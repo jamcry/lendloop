@@ -8,6 +8,7 @@ import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { LoanActivity } from "@/components/loan-activity";
 import { StatusPill } from "@/components/status-pill";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -93,51 +94,78 @@ export function IncomingRequests() {
         <div className="space-y-3">
           {filtered.map((loan) => (
             <Card key={loan.id} className="py-0">
-              <CardContent className="flex flex-wrap items-center justify-between gap-4 p-5">
-                <div className="min-w-0 space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Link
-                      href={`/tools/${loan.toolId}`}
-                      className="font-medium hover:underline"
-                    >
-                      {loan.toolName}
-                    </Link>
-                    <StatusPill status={loan.status} overdue={loan.overdue} />
-                  </div>
-                  <p className="text-muted-foreground text-sm">
-                    {loan.borrowerName} · {formatRange(loan.startDate, loan.endDate)}
-                  </p>
-                  {loan.message ? (
-                    <p className="text-muted-foreground border-l-2 pl-3 text-xs italic">
-                      “{loan.message}”
-                    </p>
-                  ) : null}
-                </div>
-
-                <div className="flex items-center gap-1">
-                  {loan.status === "pending" ? (
-                    <>
-                      <Button
-                        size="sm"
-                        disabled={busyId === loan.id}
-                        onClick={async () => {
-                          setBusyId(loan.id);
-                          try {
-                            await decide({
-                              loanId: loan.id as Id<"loans">,
-                              decision: "approved",
-                            });
-                            toast.success("Approved. The tool is reserved.");
-                          } catch (error) {
-                            toast.error(errorMessage(error));
-                          } finally {
-                            setBusyId(null);
-                          }
-                        }}
+              <CardContent className="p-5">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link
+                        href={`/tools/${loan.toolId}`}
+                        className="font-medium hover:underline"
                       >
-                        <Check className="size-3.5" />
-                        Approve
-                      </Button>
+                        {loan.toolName}
+                      </Link>
+                      <StatusPill status={loan.status} overdue={loan.overdue} />
+                    </div>
+                    <p className="text-muted-foreground text-sm">
+                      {loan.borrowerName} · {formatRange(loan.startDate, loan.endDate)}
+                    </p>
+                    {loan.message ? (
+                      <p className="text-muted-foreground border-l-2 pl-3 text-xs italic">
+                        “{loan.message}”
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    {loan.status === "pending" ? (
+                      <>
+                        <Button
+                          size="sm"
+                          disabled={busyId === loan.id}
+                          onClick={async () => {
+                            setBusyId(loan.id);
+                            try {
+                              await decide({
+                                loanId: loan.id as Id<"loans">,
+                                decision: "approved",
+                              });
+                              toast.success("Approved. The tool is reserved.");
+                            } catch (error) {
+                              toast.error(errorMessage(error));
+                            } finally {
+                              setBusyId(null);
+                            }
+                          }}
+                        >
+                          <Check className="size-3.5" />
+                          Approve
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={busyId === loan.id}
+                          onClick={async () => {
+                            setBusyId(loan.id);
+                            try {
+                              await decide({
+                                loanId: loan.id as Id<"loans">,
+                                decision: "declined",
+                              });
+                              toast.success("Request declined.");
+                            } catch (error) {
+                              toast.error(errorMessage(error));
+                            } finally {
+                              setBusyId(null);
+                            }
+                          }}
+                        >
+                          <X className="size-3.5" />
+                          Decline
+                        </Button>
+                      </>
+                    ) : null}
+
+                    {loan.status === "approved" ? (
                       <Button
                         size="sm"
                         variant="outline"
@@ -145,11 +173,8 @@ export function IncomingRequests() {
                         onClick={async () => {
                           setBusyId(loan.id);
                           try {
-                            await decide({
-                              loanId: loan.id as Id<"loans">,
-                              decision: "declined",
-                            });
-                            toast.success("Request declined.");
+                            await markReturned({ loanId: loan.id as Id<"loans"> });
+                            toast.success("Marked as returned.");
                           } catch (error) {
                             toast.error(errorMessage(error));
                           } finally {
@@ -157,33 +182,17 @@ export function IncomingRequests() {
                           }
                         }}
                       >
-                        <X className="size-3.5" />
-                        Decline
+                        <Undo2 className="size-3.5" />
+                        Mark returned
                       </Button>
-                    </>
-                  ) : null}
+                    ) : null}
+                  </div>
+                </div>
 
-                  {loan.status === "approved" ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={busyId === loan.id}
-                      onClick={async () => {
-                        setBusyId(loan.id);
-                        try {
-                          await markReturned({ loanId: loan.id as Id<"loans"> });
-                          toast.success("Marked as returned.");
-                        } catch (error) {
-                          toast.error(errorMessage(error));
-                        } finally {
-                          setBusyId(null);
-                        }
-                      }}
-                    >
-                      <Undo2 className="size-3.5" />
-                      Mark returned
-                    </Button>
-                  ) : null}
+                {/* The automation trail belongs on the loan, not only on the
+                    borrower's view of the tool. */}
+                <div className="mt-3 empty:hidden">
+                  <LoanActivity loanId={loan.id as Id<"loans">} compact hideWhenEmpty />
                 </div>
               </CardContent>
             </Card>

@@ -8,6 +8,7 @@ import { toast } from "sonner";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { LoanActivity } from "@/components/loan-activity";
 import { StatusPill, TrustedPill } from "@/components/status-pill";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -58,6 +59,7 @@ export function MyRequests() {
             <TableHead>Dates</TableHead>
             <TableHead>Lender</TableHead>
             <TableHead>Status</TableHead>
+            <TableHead>Activity</TableHead>
             <TableHead className="text-right">Action</TableHead>
           </TableRow>
         </TableHeader>
@@ -83,6 +85,14 @@ export function MyRequests() {
               </TableCell>
               <TableCell>
                 <StatusPill status={request.status} overdue={request.overdue} />
+              </TableCell>
+              <TableCell className="max-w-[12rem]">
+                <LoanActivity
+                  loanId={request.id as Id<"loans">}
+                  compact
+                  limit={1}
+                  hideWhenEmpty
+                />
               </TableCell>
               <TableCell className="text-right">
                 {request.status === "pending" ? (

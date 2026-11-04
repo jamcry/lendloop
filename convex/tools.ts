@@ -3,13 +3,19 @@ import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { forbidden, getViewer, notFound, requireViewer } from "./lib/authz";
-import { lentToolsByToolId } from "./lib/loans";
-import { cleanText, MAX_DESCRIPTION_LENGTH, MAX_NAME_LENGTH } from "./lib/validation";
+import { futureLoansByToolId, isOverdue, lentToolsByToolId } from "./lib/loans";
+import {
+  cleanText,
+  MAX_DESCRIPTION_LENGTH,
+  MAX_NAME_LENGTH,
+  todayUtc,
+} from "./lib/validation";
 import { toolCategoryValidator, toolConditionValidator } from "./schema";
 
 function toToolFields(
   tool: Doc<"tools">,
   lent: Map<string, Doc<"loans">>,
+  next: Doc<"loans"> | undefined,
   viewerId: Doc<"users">["_id"],
 ) {
   const activeLoan = lent.get(tool._id);
@@ -21,8 +27,13 @@ function toToolFields(
     description: tool.description,
     isMine: tool.ownerId === viewerId,
     availability: activeLoan
-      ? { state: "lent" as const, until: activeLoan.endDate }
-      : { state: "available" as const, until: null },
+      ? {
+          state: "lent" as const,
+          until: activeLoan.endDate,
+          overdue: isOverdue(activeLoan),
+        }
+      : { state: "available" as const, until: null, overdue: false },
+    nextBooking: next ? { startDate: next.startDate, endDate: next.endDate } : null,
     createdAt: tool.createdAt,
   };
 }
@@ -63,6 +74,7 @@ export const browse = query({
     if (!viewer) return [];
 
     const lent = await lentToolsByToolId(ctx);
+    const future = await futureLoansByToolId(ctx);
 
     const tools = category
       ? await ctx.db
@@ -92,7 +104,7 @@ export const browse = query({
       .map((tool) => {
         const owner = owners.get(tool.ownerId);
         return {
-          ...toToolFields(tool, lent, viewer._id),
+          ...toToolFields(tool, lent, future.get(tool._id), viewer._id),
           ownerName: owner?.name ?? "Neighbor",
           ownerTrustedLender: owner?.trustedLender ?? false,
         };
@@ -128,18 +140,24 @@ export const get = query({
       .withIndex("by_tool", (q) => q.eq("toolId", tool._id).eq("status", "approved"))
       .collect();
 
+    const today = todayUtc();
+    const upcoming = approved
+      .filter((loan) => loan.endDate >= today)
+      .sort((a, b) => a.startDate - b.startDate);
+    const next = upcoming.find((loan) => loan.startDate > today);
+
     return {
-      ...toToolFields(tool, lent, viewer._id),
+      ...toToolFields(tool, lent, next, viewer._id),
       ownerName: owner?.name ?? "Neighbor",
       ownerTrustedLender: owner?.trustedLender ?? false,
       archivedAt: tool.archivedAt ?? null,
       myPendingRequest: mine
         ? { id: mine._id, startDate: mine.startDate, endDate: mine.endDate }
         : null,
-      upcomingLoans: approved
-        .filter((loan) => loan.endDate >= Date.now())
-        .sort((a, b) => a.startDate - b.startDate)
-        .map((loan) => ({ startDate: loan.startDate, endDate: loan.endDate })),
+      upcomingLoans: upcoming.map((loan) => ({
+        startDate: loan.startDate,
+        endDate: loan.endDate,
+      })),
     };
   },
 });
@@ -152,6 +170,7 @@ export const myListings = query({
     if (!viewer) return [];
 
     const lent = await lentToolsByToolId(ctx);
+    const future = await futureLoansByToolId(ctx);
 
     const tools = await ctx.db
       .query("tools")
@@ -162,7 +181,7 @@ export const myListings = query({
       .slice()
       .sort((a, b) => b.createdAt - a.createdAt)
       .map((tool) => ({
-        ...toToolFields(tool, lent, viewer._id),
+        ...toToolFields(tool, lent, future.get(tool._id), viewer._id),
         archivedAt: tool.archivedAt ?? null,
       }));
   },

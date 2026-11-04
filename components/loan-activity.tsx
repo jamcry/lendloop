@@ -39,9 +39,13 @@ type ActivityKind = keyof typeof KIND_META;
 export function LoanActivity({
   loanId,
   compact = false,
+  limit,
+  hideWhenEmpty = false,
 }: {
   loanId: Id<"loans">;
   compact?: boolean;
+  limit?: number;
+  hideWhenEmpty?: boolean;
 }) {
   const rows = useQuery(api.automation.activityForLoan, { loanId });
 
@@ -49,7 +53,10 @@ export function LoanActivity({
     return <Skeleton className="h-10 w-full rounded-md" />;
   }
 
-  if (rows.length === 0) {
+  const visible = limit ? rows.slice(0, limit) : rows;
+
+  if (visible.length === 0) {
+    if (hideWhenEmpty) return null;
     return (
       <p className="text-muted-foreground text-xs">
         No automation activity yet. Notifications appear here once n8n runs.
@@ -59,26 +66,31 @@ export function LoanActivity({
 
   return (
     <ul className={cn("space-y-2", compact && "space-y-1")}>
-      {rows.map((row) => {
+      {visible.map((row) => {
         const meta = KIND_META[row.kind as ActivityKind] ?? {
           label: row.kind,
           icon: CircleCheck,
           tone: "text-muted-foreground",
         };
+        // A reminder is claimed before it is sent. Until the workflow confirms the
+        // send, the truthful label is "queued", not "sent".
+        const queued = row.kind === "reminder.sent" && row.confirmedAt === undefined;
+        const label = queued ? "Reminder queued" : meta.label;
+        const tone = queued ? "text-amber-600" : meta.tone;
         const Icon = meta.icon;
 
         return (
           <li key={row._id} className="flex items-start gap-2 text-xs">
-            <Icon className={cn("mt-0.5 size-3.5 shrink-0", meta.tone)} aria-hidden />
+            <Icon className={cn("mt-0.5 size-3.5 shrink-0", tone)} aria-hidden />
             <div className="min-w-0">
               <p className="text-foreground">
-                {meta.label}
+                {label}
                 <span className="text-muted-foreground">
                   {" "}
                   · {relativeTime(row.createdAt)}
                 </span>
               </p>
-              {compact ? null : (
+              {compact || queued ? null : (
                 <p className="text-muted-foreground truncate">{row.detail}</p>
               )}
             </div>

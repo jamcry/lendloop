@@ -39,7 +39,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatRange, relativeTime } from "@/lib/dates";
+import { formatRange, relativeFuture, relativeTime } from "@/lib/dates";
 import { errorMessage } from "@/lib/errors";
 import { categoryLabel } from "@/lib/labels";
 
@@ -390,11 +390,13 @@ function ActivityFeed() {
 function AutomationFeed() {
   const rows = useQuery(api.automation.recentActivity);
   const failed = useQuery(api.automation.failedJobs);
+  const retrying = useQuery(api.automation.retryingJobs);
 
   if (rows === undefined) return <Skeleton className="h-32 w-full rounded-xl" />;
 
   return (
     <div className="space-y-6">
+      <RetryingJobs jobs={retrying} />
       <FailedJobs jobs={failed} />
 
       {rows.length === 0 ? (
@@ -405,6 +407,60 @@ function AutomationFeed() {
       ) : (
         <ActivityTable rows={rows} />
       )}
+    </div>
+  );
+}
+
+/** Jobs that failed at least once and are waiting for the next attempt.
+ *  Visible before the ladder exhausts, so a broken webhook is not silent for hours. */
+function RetryingJobs({
+  jobs,
+}: {
+  jobs:
+    | Array<{
+        id: string;
+        kind: string;
+        attempts: number;
+        lastError: string | null;
+        nextAttemptAt: number;
+      }>
+    | undefined;
+}) {
+  if (jobs === undefined || jobs.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      <h3 className="text-muted-foreground font-mono text-[11px] tracking-wider uppercase">
+        Retrying
+      </h3>
+      <div className="overflow-hidden rounded-xl border border-amber-200 dark:border-amber-900">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Event</TableHead>
+              <TableHead>Attempts</TableHead>
+              <TableHead>Last error</TableHead>
+              <TableHead>Next attempt</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {jobs.map((job) => (
+              <TableRow key={job.id}>
+                <TableCell className="font-mono text-xs">{job.kind}</TableCell>
+                <TableCell className="text-muted-foreground text-xs">
+                  {job.attempts}
+                </TableCell>
+                <TableCell className="text-muted-foreground max-w-md truncate text-sm">
+                  {job.lastError}
+                </TableCell>
+                <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
+                  {relativeFuture(job.nextAttemptAt)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   );
 }
@@ -472,6 +528,7 @@ function ActivityTable({
     kind: string;
     detail: string;
     channel: string;
+    confirmedAt?: number | null;
     createdAt: number;
   }>;
 }) {
@@ -487,30 +544,40 @@ function ActivityTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rows.map((row) => (
-            <TableRow key={row._id}>
-              <TableCell className="font-mono text-xs whitespace-nowrap">
-                <span
-                  className={
-                    row.kind === "notification.failed" || row.kind === "workflow.failed"
-                      ? "text-red-600 dark:text-red-400"
-                      : "text-muted-foreground"
-                  }
-                >
-                  {row.kind}
-                </span>
-              </TableCell>
-              <TableCell className="text-muted-foreground max-w-md truncate text-sm">
-                {row.detail}
-              </TableCell>
-              <TableCell className="text-muted-foreground text-xs">
-                {row.channel}
-              </TableCell>
-              <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
-                {relativeTime(row.createdAt)}
-              </TableCell>
-            </TableRow>
-          ))}
+          {rows.map((row) => {
+            // A claimed reminder that never confirmed is queued, not sent.
+            const kind =
+              row.kind === "reminder.sent" && row.confirmedAt === undefined
+                ? "reminder.queued"
+                : row.kind;
+
+            return (
+              <TableRow key={row._id}>
+                <TableCell className="font-mono text-xs whitespace-nowrap">
+                  <span
+                    className={
+                      row.kind === "notification.failed" || row.kind === "workflow.failed"
+                        ? "text-red-600 dark:text-red-400"
+                        : kind === "reminder.queued"
+                          ? "text-amber-600 dark:text-amber-400"
+                          : "text-muted-foreground"
+                    }
+                  >
+                    {kind}
+                  </span>
+                </TableCell>
+                <TableCell className="text-muted-foreground max-w-md truncate text-sm">
+                  {row.detail}
+                </TableCell>
+                <TableCell className="text-muted-foreground text-xs">
+                  {row.channel}
+                </TableCell>
+                <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
+                  {relativeTime(row.createdAt)}
+                </TableCell>
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
     </div>

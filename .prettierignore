@@ -1,2 +1,7 @@
 convex/_generated
 .next
+e2e/.report
+e2e/.results
+playwright-report
+test-results
+package-lock.json

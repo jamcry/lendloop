@@ -61,3 +61,16 @@ export function relativeTime(timestamp: number, now = Date.now()): string {
 
   return formatDateWithYear(timestamp);
 }
+
+/** "in 30 min" for a scheduled retry. `relativeTime` would say "just now". */
+export function relativeFuture(timestamp: number, now = Date.now()): string {
+  const minutes = Math.round((timestamp - now) / 60_000);
+  if (minutes <= 0) return "now";
+  if (minutes < 60) return `in ${minutes} min`;
+
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `in ${hours} ${hours === 1 ? "hour" : "hours"}`;
+
+  const days = Math.round(hours / 24);
+  return `in ${days} ${days === 1 ? "day" : "days"}`;
+}

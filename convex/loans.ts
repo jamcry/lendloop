@@ -10,7 +10,7 @@ import {
   requireViewer,
 } from "./lib/authz";
 import { enqueueLoanEvent } from "./automation";
-import { assertRangeIsFree, isOverdue } from "./lib/loans";
+import { assertRangeIsFree, findOverdueLoan, isOverdue } from "./lib/loans";
 import {
   assertLoanRange,
   cleanText,
@@ -81,6 +81,15 @@ export const request = mutation({
     const endDate = startOfUtcDay(args.endDate);
 
     await assertRangeIsFree(ctx, tool._id, startDate, endDate);
+
+    // The tool is still physically out. Letting a request queue against it would
+    // promise dates the lender cannot keep; the form is hidden for this state too.
+    const overdue = await findOverdueLoan(ctx, tool._id);
+    if (overdue) {
+      throw new ConvexError(
+        "This tool is still out on loan. Try again once the lender marks it returned.",
+      );
+    }
 
     const existingPending = await ctx.db
       .query("loans")
@@ -300,7 +309,7 @@ export const forTool = query({
       .collect();
 
     const active = loans
-      .filter((loan) => loan.toolId === toolId && loan.status !== "cancelled")
+      .filter((loan) => loan.toolId === toolId)
       .sort((a, b) => b.createdAt - a.createdAt);
 
     return active.length ? await describeLoan(ctx, active[0]) : null;

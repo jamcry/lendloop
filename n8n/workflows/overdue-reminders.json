@@ -1,5 +1,5 @@
 {
-  "name": "LendLoop \u2014 Overdue reminders",
+  "name": "LendLoop — Overdue reminders",
   "nodes": [
     {
       "parameters": {},
@@ -70,7 +70,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Turns the response into one item per loan, each with its own signature and\n// idempotency key. No notification is sent here: the reminder is *claimed* first\n// so that a re-run of this workflow cannot send a second reminder.\nconst crypto = require('crypto');\nconst secret = $env.LENDLOOP_SHARED_SECRET;\n\nconst response = $input.first().json;\nconst loans = Array.isArray(response.loans) ? response.loans : [];\nconst today = new Date().toISOString().slice(0, 10);\n\nconst output = [];\n\nfor (const loan of loans) {\n  if (!loan.loanId || !loan.daysOverdue || loan.daysOverdue <= 0) continue;\n\n  const dueDate = new Date(loan.dueDate).toISOString().slice(0, 10);\n  const message = `Your loan of ${loan.toolName} was due ${dueDate} and is ${loan.daysOverdue} day(s) late. Please return it to your neighbor.`;\n\n  const body = JSON.stringify({\n    loanId: loan.loanId,\n    channel: 'mock',\n    detail: `Overdue reminder for ${loan.toolName} (${loan.daysOverdue}d late)`,\n  });\n\n  const timestamp = String(Math.floor(Date.now() / 1000));\n  const signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');\n\n  output.push({\n    json: {\n      loanId: loan.loanId,\n      body,\n      timestamp,\n      signature,\n      recipientEmail: loan.borrowerEmail ?? 'unknown',\n      // Derived from data, so a retried run and a duplicate schedule run produce\n      // the same key and the claim collapses to one record.\n      idempotencyKey: `reminder:${loan.loanId}:${loan.dueDate}:${today}`,\n      message,\n    },\n  });\n}\n\nreturn output;"
+        "jsCode": "// Turns the response into one item per loan, each with its own signatures and\n// idempotency key. The claim is written first so a retry cannot create a second\n// reminder; the confirmation is sent only after the reminder itself succeeds.\nconst crypto = require('crypto');\nconst secret = $env.LENDLOOP_SHARED_SECRET;\n\nconst response = $input.first().json;\nconst loans = Array.isArray(response.loans) ? response.loans : [];\nconst today = new Date().toISOString().slice(0, 10);\n\nconst output = [];\n\nfor (const loan of loans) {\n  if (!loan.loanId || !loan.daysOverdue || loan.daysOverdue <= 0) continue;\n\n  const dueDate = new Date(loan.dueDate).toISOString().slice(0, 10);\n  const message = `Your loan of ${loan.toolName} was due ${dueDate} and is ${loan.daysOverdue} day(s) late. Please return it to your neighbor.`;\n\n  const body = JSON.stringify({\n    loanId: loan.loanId,\n    channel: 'mock',\n    detail: `Overdue reminder for ${loan.toolName} (${loan.daysOverdue}d late)`,\n  });\n\n  const timestamp = String(Math.floor(Date.now() / 1000));\n  const signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex');\n\n  // The confirmation is a separate signed request with the same idempotency key.\n  const confirmBody = JSON.stringify({ loanId: loan.loanId });\n  const confirmTimestamp = String(Math.floor(Date.now() / 1000));\n  const confirmSignature = crypto\n    .createHmac('sha256', secret)\n    .update(`${confirmTimestamp}.${confirmBody}`)\n    .digest('hex');\n\n  output.push({\n    json: {\n      loanId: loan.loanId,\n      body,\n      timestamp,\n      signature,\n      confirmBody,\n      confirmTimestamp,\n      confirmSignature,\n      // Null, not a placeholder, so a missing address fails loudly in the send step.\n      recipientEmail: loan.borrowerEmail ?? null,\n      // Derived from data, so a retried run and a duplicate schedule run produce\n      // the same key and the claim collapses to one record.\n      idempotencyKey: `reminder:${loan.loanId}:${loan.dueDate}:${today}`,\n      message,\n    },\n  });\n}\n\nreturn output;"
       },
       "id": "b1000000-0000-4000-8000-000000000004",
       "name": "Build signed reminders",
@@ -113,19 +113,55 @@
       "position": [440, 0],
       "retryOnFail": true,
       "maxTries": 3,
-      "waitBetweenTries": 5000,
-      "onError": "continueRegularOutput"
+      "waitBetweenTries": 5000
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Sends only for reminders this run actually claimed. A duplicate claim means a\n// previous run already notified this borrower, so re-running the schedule is\n// safe: the record and the send collapse together.\nconst source = $('Build signed reminders').all();\n\nconst results = $input.all().map((item, index) => {\n  const claim = item.json ?? {};\n  const original = source[index]?.json ?? {};\n\n  if (claim.ok !== true || claim.duplicate !== false) return null;\n\n  console.log(\n    `[LENDLOOP MOCK] to=${original.recipientEmail ?? 'unknown'} subject=Overdue: ${original.message}`,\n  );\n\n  return { json: { loanId: original.loanId, sent: true } };\n});\n\nreturn results.filter(Boolean);"
+        "jsCode": "// Sends only for reminders this run actually claimed. A duplicate claim means a\n// previous run already handled it, so re-running the schedule is safe.\n//\n// The build item is matched by loanId, not by array position, so a rejected or\n// reordered HTTP response cannot send one borrower's message to another.\nconst claims = $input.all();\nconst originals = $('Build signed reminders').all().map((item) => item.json);\n\nconst output = [];\n\nfor (const item of claims) {\n  const claim = item.json ?? {};\n  const original = originals.find((entry) => entry.loanId === claim.loanId);\n\n  if (!original) {\n    throw new Error(`No signed reminder matches claim ${claim.loanId ?? 'unknown'}`);\n  }\n  if (claim.ok !== true) {\n    throw new Error(`Reminder claim was rejected for loan ${claim.loanId}`);\n  }\n  // A duplicate that was never confirmed means an earlier run claimed the\n  // reminder but did not finish. Retry the send; only a confirmed duplicate is\n  // skipped, so a stuck claim cannot silence the reminder.\n  if (claim.duplicate === true && claim.confirmed === true) continue;\n\n  if (!original.recipientEmail) {\n    // Throwing (not returning) fails the execution, which invokes the error\n    // workflow. A reminder that cannot be delivered must be visible.\n    throw new Error(`No recipient email for loan ${claim.loanId}`);\n  }\n\n  // The assignment allows a logged mock instead of real email. Swap this for an\n  // Email/Slack node; the claim -> send -> confirm protocol around it is unchanged.\n  console.log(\n    `[LENDLOOP MOCK] to=${original.recipientEmail} subject=Overdue: ${original.message}`,\n  );\n\n  output.push({\n    json: {\n      loanId: original.loanId,\n      recipientEmail: original.recipientEmail,\n      body: original.confirmBody,\n      timestamp: original.confirmTimestamp,\n      signature: original.confirmSignature,\n      idempotencyKey: original.idempotencyKey,\n    },\n  });\n}\n\nreturn output;"
       },
       "id": "b1000000-0000-4000-8000-000000000006",
-      "name": "Notify claimed reminders",
+      "name": "Send reminder",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [660, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LENDLOOP_SITE_URL }}/automation/reminders/confirm",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-lendloop-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-lendloop-signature",
+              "value": "={{ $json.signature }}"
+            },
+            {
+              "name": "idempotency-key",
+              "value": "={{ $json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.body }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000007",
+      "name": "Confirm reminder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 0],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
     }
   ],
   "connections": {
@@ -188,7 +224,18 @@
       "main": [
         [
           {
-            "node": "Notify claimed reminders",
+            "node": "Send reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send reminder": {
+      "main": [
+        [
+          {
+            "node": "Confirm reminder",
             "type": "main",
             "index": 0
           }

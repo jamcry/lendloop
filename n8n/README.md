@@ -57,17 +57,28 @@ executed without waiting for 08:00:
 docker compose run --rm --no-deps --entrypoint n8n -T n8n execute --id=<overdue-workflow-id>
 ```
 
-Run it twice. The reminder is _claimed_ before it is sent, so the second run
-claims nothing and sends nothing — exactly one row and one notification:
+Use `docker compose run` (a one-off container), not `docker exec` into the running
+one: the CLI starts its own task broker on port 5679 and refuses to start when the
+live container already holds it.
+
+Run it twice. Each run claims the reminder, sends it, then confirms it. The second
+run claims nothing, so it sends nothing — exactly one row, confirmed once:
 
 ```bash
 cd .. && npx convex data loanActivity
 ```
 
-Seed an overdue loan first if you need one:
+A row with `kind: "reminder.sent"` but no `confirmedAt` is a queued reminder whose
+send or confirmation failed. The app labels it "Reminder queued", not "sent", and
+the failed execution is reported to the admin Automation tab by the error
+workflow.
+
+Seed an overdue loan first if you need one. Pass your own address so the seeded
+listings belong to a real account; the overdue tool is then hidden from the public
+board until you mark that loan returned:
 
 ```bash
-npx convex run seed:populate
+npx convex run seed:populate '{"ownerEmail":"you@example.com"}'
 npx convex run seed:createDemoOverdueLoan
 ```
 

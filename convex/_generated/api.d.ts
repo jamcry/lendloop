@@ -15,6 +15,7 @@ import type * as lib_authz from "../lib/authz.js";
 import type * as lib_loans from "../lib/loans.js";
 import type * as lib_signing from "../lib/signing.js";
 import type * as lib_validation from "../lib/validation.js";
+import type * as lib_viewer from "../lib/viewer.js";
 import type * as loans from "../loans.js";
 import type * as seed from "../seed.js";
 import type * as tools from "../tools.js";
@@ -34,6 +35,7 @@ declare const fullApi: ApiFromModules<{
   "lib/loans": typeof lib_loans;
   "lib/signing": typeof lib_signing;
   "lib/validation": typeof lib_validation;
+  "lib/viewer": typeof lib_viewer;
   loans: typeof loans;
   seed: typeof seed;
   tools: typeof tools;
