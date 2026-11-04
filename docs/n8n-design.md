@@ -217,9 +217,9 @@ Two things that cost time to discover: the error workflow must be **published**
 like any other, or n8n logs "cannot be executed"; and `errorWorkflow` holds a
 workflow **ID**, which is instance-specific. The exported JSON contains the ID
 from the machine it was exported on — on a fresh instance, re-select it in the
-workflow settings after import. If the app is unreachable too, the workflow writes to a
-n8n's own execution history — which is why the error workflow is a notification,
-not the only record.
+workflow settings after import. If the app is unreachable too, the failure is
+still in n8n's own execution history — which is why the error workflow is a
+notification, not the only record.
 
 ## 6. Why the app never trusts n8n
 
